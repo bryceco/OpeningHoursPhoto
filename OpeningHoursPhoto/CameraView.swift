@@ -93,70 +93,74 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 	}
 
 	var boxLayers = [CALayer]()
-	func captureOutput(_ output: AVCaptureOutput,
-					   didOutput sampleBuffer: CMSampleBuffer,
-					   from connection: AVCaptureConnection)
-	{
+	func showBoxes(forPixelBuffer pixelBuffer: CVPixelBuffer) {
 		let orientation = CGImagePropertyOrientation.right
 		let rotationTransform = CGAffineTransform(translationX: 0, y: 1).rotated(by: -CGFloat.pi / 2)
 		let bottomToTopTransform = CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -1)
 		let visionToAVFTransform = CGAffineTransform.identity.concatenating(bottomToTopTransform).concatenating(rotationTransform)
 
-		if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-			let requestHandler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
-													   orientation: orientation,
-													   options: [:])
-			let request = VNRecognizeTextRequest(completionHandler: {request, error in
-				guard let results = request.results as? [VNRecognizedTextObservation] else { return }
-				var boxes = [CGRect]()
-				for result in results {
-					guard let candidate = result.topCandidates(1).first else { continue }
-					#if true
-					let range = candidate.string.startIndex..<candidate.string.endIndex
-					if let box = try? candidate.boundingBox(for: range)?.boundingBox {
+		let requestHandler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
+												   orientation: orientation,
+												   options: [:])
+
+		let request = VNRecognizeTextRequest(completionHandler: {request, error in
+			guard let results = request.results as? [VNRecognizedTextObservation] else { return }
+			var boxes = [CGRect]()
+			for result in results {
+				guard let candidate = result.topCandidates(1).first else { continue }
+				#if true
+				let range = candidate.string.startIndex..<candidate.string.endIndex
+				if let box = try? candidate.boundingBox(for: range)?.boundingBox {
+					boxes.append( box )
+				}
+				#else
+				let scanner = Scanner(string: candidate.string)
+				while !scanner.isAtEnd {
+					let start = scanner.currentIndex
+					_ = scanner.scanUpToCharacters(from:CharacterSet.whitespacesAndNewlines)
+					if let box = try? candidate.boundingBox(for: start..<scanner.currentIndex)?.boundingBox {
 						boxes.append( box )
 					}
-					#else
-					let scanner = Scanner(string: candidate.string)
-					while !scanner.isAtEnd {
-						let start = scanner.currentIndex
-						_ = scanner.scanUpToCharacters(from:CharacterSet.whitespacesAndNewlines)
-						if let box = try? candidate.boundingBox(for: start..<scanner.currentIndex)?.boundingBox {
-							boxes.append( box )
-						}
-						_ = scanner.scanCharacters(from:CharacterSet.whitespacesAndNewlines)
-					}
-					#endif
+					_ = scanner.scanCharacters(from:CharacterSet.whitespacesAndNewlines)
 				}
-				if boxes.count > 0 {
-					DispatchQueue.main.async {
-						if let previewLayer = self.layer.sublayers?.first as? AVCaptureVideoPreviewLayer {
-							for layer in self.boxLayers {
-								layer.removeFromSuperlayer()
-							}
-							self.boxLayers.removeAll()
-							for box in boxes {
-								let rect = previewLayer.layerRectConverted(fromMetadataOutputRect: box.applying(visionToAVFTransform))
-								let layer = CAShapeLayer()
-								layer.opacity = 1.0
-								layer.borderColor = UIColor.green.cgColor
-								layer.borderWidth = 2
-								layer.frame = rect
-								self.boxLayers.append(layer)
-								previewLayer.insertSublayer(layer, at: 1)
-							}
-						}
-					}
-				}
-			})
-			request.recognitionLevel = .fast
-			request.usesLanguageCorrection = false
-			do {
-				try requestHandler.perform([request])
-			} catch {
-				print(error)
+				#endif
 			}
+			if boxes.count > 0 {
+				DispatchQueue.main.async {
+					if let previewLayer = self.layer.sublayers?.first as? AVCaptureVideoPreviewLayer {
+						for layer in self.boxLayers {
+							layer.removeFromSuperlayer()
+						}
+						self.boxLayers.removeAll()
+						for box in boxes {
+							let rect = previewLayer.layerRectConverted(fromMetadataOutputRect: box.applying(visionToAVFTransform))
+							let layer = CAShapeLayer()
+							layer.opacity = 1.0
+							layer.borderColor = UIColor.green.cgColor
+							layer.borderWidth = 2
+							layer.frame = rect
+							self.boxLayers.append(layer)
+							previewLayer.insertSublayer(layer, at: 1)
+						}
+					}
+				}
+			}
+		})
+		request.recognitionLevel = .accurate
+//			request.usesLanguageCorrection = false
+		do {
+			try requestHandler.perform([request])
+		} catch {
+			print(error)
 		}
+	}
 
+	func captureOutput(_ output: AVCaptureOutput,
+					   didOutput sampleBuffer: CMSampleBuffer,
+					   from connection: AVCaptureConnection)
+	{
+		if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+			showBoxes(forPixelBuffer: pixelBuffer)
+		}
 	}
 }

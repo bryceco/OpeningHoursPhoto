@@ -12,6 +12,9 @@ extension String.StringInterpolation {
 	mutating func appendInterpolation(_ time: Time) {
 		appendLiteral(time.text)
 	}
+	mutating func appendInterpolation(_ dash: Dash) {
+		appendLiteral("-")
+	}
 	mutating func appendInterpolation(_ token: Token) {
 		switch token {
 		case let .day(day):
@@ -26,36 +29,101 @@ extension String.StringInterpolation {
 	}
 }
 
-extension Scanner {
-	static let letterSet = CharacterSet.uppercaseLetters.union(CharacterSet.lowercaseLetters)
-
-	func scanWord(_ word: String) -> String? {
-		let index = self.currentIndex
-		if scanString(word) != nil {
-			let skipped = self.charactersToBeSkipped
-			self.charactersToBeSkipped = nil
-			if scanCharacters(from: Scanner.letterSet) == nil {
-				self.charactersToBeSkipped = skipped
-				return word
+extension CharacterSet {
+	func contains(character: Character) -> Bool {
+		for scaler in character.unicodeScalars {
+			if self.contains(scaler) {
+				return true
 			}
-			self.charactersToBeSkipped = skipped
-			self.currentIndex = index
+		}
+		return false
+	}
+}
+
+extension Substring {
+	static func from(_ start: Substring, to: Substring) -> Substring {
+		return start.base[ start.startIndex..<to.endIndex ]
+	}
+}
+
+// A version of Scanner that returns Substring instead of String
+class SubScanner {
+
+	let scanner: Scanner
+
+	init(string: String) {
+		self.scanner = Scanner(string: string)
+		self.scanner.caseSensitive = false
+		self.scanner.charactersToBeSkipped = nil
+	}
+
+	static let allLetters = CharacterSet.uppercaseLetters.union(CharacterSet.lowercaseLetters)
+
+	var currentIndex: String.Index {
+		get { scanner.currentIndex }
+		set { scanner.currentIndex = newValue }
+	}
+
+	var isAtEnd: Bool {
+		get { scanner.isAtEnd }
+	}
+
+	func scanString(_ string: String) -> Substring? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanString(string) {
+			return scanner.string[index..<scanner.currentIndex]
 		}
 		return nil
 	}
-	func scanAnyWord(_ words: [String]) -> String? {
+
+	func scanWhitespace() -> Substring? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanCharacters(from: CharacterSet.whitespacesAndNewlines) {
+			return scanner.string[index..<scanner.currentIndex]
+		}
+		return nil
+	}
+
+	func scanUpToWhitespace() -> Substring? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanUpToCharacters(from: CharacterSet.whitespacesAndNewlines) {
+			return scanner.string[index..<scanner.currentIndex]
+		}
+		return nil
+	}
+
+	func scanInt() -> Substring? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanInt() {
+			return scanner.string[index..<scanner.currentIndex]
+		}
+		return nil
+	}
+
+	func scanWord(_ word: String) -> Substring? {
+		if let sub = scanString(word) {
+			if sub.endIndex < scanner.string.endIndex {
+				let c = scanner.string[sub.endIndex]
+				if SubScanner.allLetters.contains(character: c) {
+					// it's part of a larger word
+					scanner.currentIndex = sub.startIndex
+					return nil
+				}
+			}
+			return sub
+		}
+		return nil
+	}
+	func scanAnyWord(_ words: [String]) -> Substring? {
 		for word in words {
-			if scanWord(word) != nil {
-				return word
+			if let sub = scanWord(word) {
+				return sub
 			}
 		}
 		return nil
 	}
 	func remainder() -> String {
-		let index = self.currentIndex
-		let r = self.scanCharacters(from: CharacterSet(charactersIn: "").inverted)
-		self.currentIndex = index
-		return r ?? ""
+		return String(scanner.string[scanner.currentIndex...])
 	}
 }
 
@@ -67,18 +135,6 @@ enum Day: String {
 	case Fr = "Fr"
 	case Sa = "Sa"
 	case Su = "Su"
-
-	init?(_ text: String) {
-		let scanner = Scanner(string: text)
-		scanner.caseSensitive = true
-		if let (day,_) = Day.scan(scanner: scanner),
-		   scanner.isAtEnd
-		{
-			self = day
-		} else {
-			return nil
-		}
-	}
 
 	static let english = [	Day.Mo: ["monday", 		"mo", "mon"],
 							Day.Tu: ["tuesday", 	"tu", "tue"],
@@ -97,11 +153,11 @@ enum Day: String {
 							Day.Su: ["sonntag",		"so", "son"]
 	]
 
-	static func scan(scanner:Scanner) -> (day:Self, confidence:Float)? {
+	static func scan(scanner:SubScanner) -> (day:Self, substring:Substring, confidence:Float)? {
 		let dict = english
 		for (day,strings) in dict {
 			if let s = scanner.scanAnyWord(strings) {
-				return (day,Float(s.count))
+				return (day,s,Float(s.count))
 			}
 		}
 		return nil
@@ -115,50 +171,62 @@ struct Time {
 		self.text = String(format: "%02d:%02d", hour, minute)
 	}
 
-	static func scan(scanner: Scanner) -> (time:Self, confidence:Float)? {
-		let index = scanner.currentIndex
-		if let hour = scanner.scanInt(),
-		   hour >= 0 && hour <= 24
+	static func scan(scanner: SubScanner) -> (time:Self, substring:Substring, confidence:Float)? {
+		guard let hour = scanner.scanInt() else { return nil }
+		if let iHour = Int(hour),
+		   iHour >= 0 && iHour <= 24
 		{
-			let index2 = scanner.currentIndex
 			if scanner.scanString(":") != nil || scanner.scanString(".") != nil,
-			   let minute = scanner.scanCharacters(from: CharacterSet.decimalDigits),
+			   let minute = scanner.scanInt(),
 			   minute.count == 2,
 			   minute >= "00" && minute < "60"
 			{
-				if scanner.scanString("AM") != nil {
-					return (Time(hour: hour%12, minute: Int(minute)!), 8.0)
+				_ = scanner.scanWhitespace()
+				if let am = scanner.scanString("AM") {
+					return (Time(hour: iHour%12, minute: Int(minute)!),
+							Substring.from(hour, to:am),
+							8.0)
 				}
-				if scanner.scanString("PM") != nil {
-					return (Time(hour: (hour%12)+12, minute: Int(minute)!), 8.0)
+				if let pm = scanner.scanString("PM") {
+					return (Time(hour: (iHour%12)+12, minute: Int(minute)!),
+							Substring.from(hour, to:pm),
+							8.0)
 				}
-				return (Time(hour: hour, minute: Int(minute)!), 6.0)
+				return (Time(hour: iHour, minute: Int(minute)!),
+						Substring.from(hour, to:minute),
+						6.0)
 			}
-			scanner.currentIndex = index2
-			if scanner.scanString("AM") != nil {
-				return (Time(hour: hour%12, minute: 0), 4.0)
+			_ = scanner.scanWhitespace()
+			if let am = scanner.scanString("AM") {
+				return (Time(hour: iHour%12, minute: 0),
+						Substring.from(hour, to:am),
+						4.0)
 			}
-			if scanner.scanString("PM") != nil {
-				return (Time(hour: (hour%12)+12, minute: 0), 4.0)
+			if let pm = scanner.scanString("PM") {
+				return (Time(hour: (iHour%12)+12, minute: 0),
+						Substring.from(hour, to:pm),
+						4.0)
 			}
-			return (Time(hour: hour, minute: 0), 2.0)
+			return (Time(hour: iHour, minute: 0),
+					hour,
+					2.0)
 		}
-		scanner.currentIndex = index
+		scanner.currentIndex = hour.startIndex
 		return nil
 	}
 }
 
 struct Dash {
-	static func scan(scanner: Scanner) -> (Self,Float)? {
+	static func scan(scanner: SubScanner) -> (Self,Substring,Float)? {
 		if let s = scanner.scanString("-") ?? scanner.scanWord("to") {
-			return (Dash(), Float(s.count))
+			return (Dash(), s, Float(s.count))
 		}
 		return nil
 	}
 }
 
-typealias TextConfidence = (text:String, confidence:Float)
-typealias TokenConfidence = (token:Token, confidence:Float)
+typealias TokenSubstringConfidence = (token:Token, substring:Substring, confidence:Float)
+typealias TokenRectConfidence = (token:Token, rect:CGRect, confidence:Float)
 
 enum Token {
 	case time(Time)
@@ -166,15 +234,15 @@ enum Token {
 	case dash(Dash)
 	case endOfText
 
-	static func scan(scanner: Scanner) -> TokenConfidence? {
-		if let (day,confidence) = Day.scan(scanner: scanner) {
-			return (.day(day),confidence)
+	static func scan(scanner: SubScanner) -> TokenSubstringConfidence? {
+		if let (day,substring,confidence) = Day.scan(scanner: scanner) {
+			return (.day(day),substring,confidence)
 		}
-		if let (time,confidence) = Time.scan(scanner: scanner) {
-			return (.time(time),confidence)
+		if let (time,substring,confidence) = Time.scan(scanner: scanner) {
+			return (.time(time),substring,confidence)
 		}
-		if let (dash,confidence) = Dash.scan(scanner: scanner) {
-			return (.dash(dash),confidence)
+		if let (dash,substring,confidence) = Dash.scan(scanner: scanner) {
+			return (.dash(dash),substring,confidence)
 		}
 		return nil
 	}
@@ -182,21 +250,15 @@ enum Token {
 
 class HoursRecognizer {
 
+	var bbox: ((Range<String.Index>) -> (CGRect?))? = nil
+
 	init() {
 	}
 
 	func hoursForImage(image: CGImage) -> String {
 		// get list of text strings in image
-		let textFragments = HoursRecognizer.getImageText(from: image)
-
-		#if false
-		for frag in textFragments {
-			print("  \(Int(100.0*frag.confidence))%: \(frag.text)")
-		}
-		#endif
-
-		// get list of tokens from the list of strings
-		let tokensList = HoursRecognizer.getTokensFromFragments(textFragments)
+		let requestHandler = VNImageRequestHandler(cgImage: image, options: [:])
+		let tokensList =  HoursRecognizer.getImageTokens(fromRequest: requestHandler)
 
 		// extract hours string from the tokens
 		let text = HoursRecognizer.getHoursFromTokens(tokensList)
@@ -205,51 +267,72 @@ class HoursRecognizer {
 
 	// Returns an array of string arrays.
 	// Each inner array is a possible interpretation of the text.
-	fileprivate class func getImageText(from image: CGImage) -> [TextConfidence] {
-		var list = [TextConfidence]()
+	fileprivate class func getImageTokens(fromRequest requestHandler: VNImageRequestHandler) -> [TokenRectConfidence] {
+		var list = [TokenRectConfidence]()
+		print("")
+		print("")
+		print("")
 		let request = VNRecognizeTextRequest(completionHandler: { (request, error) in
 			guard error == nil,
 				  let observations = request.results as? [VNRecognizedTextObservation] else { return }
 			for observation in observations {
 				if let candidate = observation.topCandidates(1).first {
-					list.append(TextConfidence(candidate.string, candidate.confidence))
+					let tokens = getTokensForString(candidate.string)
+					let tokens2 = tokens.map({ item -> (token:Token,rect:CGRect,confidence:Float) in
+						let range = item.substring.startIndex..<item.substring.endIndex
+						let rect = try? candidate.boundingBox(for: range)?.boundingBox
+						return (item.token,
+								rect!,
+								item.confidence * candidate.confidence)
+					})
+					let t = tokens2.map { "\($0.token)" }.joined(separator: " ")
+					print("\(candidate.string) -> \(t)")
+
+					list += tokens2
 				}
 			}
 		})
+
 		request.recognitionLevel = .accurate
 //		request.customWords = ["AM","PM"]
-//		request.usesLanguageCorrection = false
-		let requestHandler = VNImageRequestHandler(cgImage: image, options: [:])
+		request.usesLanguageCorrection = true
 		try? requestHandler.perform([request])
+
+		print("")
+		var allTokens = list.map { "\($0.token)" }.joined(separator: " ")
+		print("\(allTokens)")
+
+		// sort tokens left to right, then top to bottom
+		list.sort {
+			if $0.rect.origin.y + $0.rect.size.height/2 < $1.rect.origin.y {
+				return true
+			}
+			return $0.rect.origin.x < $1.rect.origin.x
+		}
+
+		allTokens = list.map { "\($0.token)" }.joined(separator: " ")
+		print("\(allTokens)")
+
 		return list
 	}
 
-	fileprivate class func getTokensForString(_ string: String) -> [TokenConfidence] {
-		let scanner = Scanner(string: string)
-		scanner.caseSensitive = false
-		scanner.charactersToBeSkipped = CharacterSet.whitespacesAndNewlines
-		var list = [TokenConfidence]()
+	fileprivate class func getTokensForString(_ string: String) -> [(token:Token,substring:Substring,confidence:Float)] {
+		var list = [(Token,Substring,Float)]()
+		let scanner = SubScanner(string: string)
+		_ = scanner.scanWhitespace()
 		while !scanner.isAtEnd {
 			if let token = Token.scan(scanner: scanner) {
 				list.append( token )
 			} else {
 				// skip to next token
-				_ = scanner.scanUpToCharacters(from: CharacterSet.whitespacesAndNewlines)
+				_ = scanner.scanUpToWhitespace()
 			}
+			_ = scanner.scanWhitespace()
 		}
 		return list
 	}
 
-	fileprivate class func getTokensFromFragments(_ fragmentList: [TextConfidence]) -> [TokenConfidence] {
-		var tokenList = [TokenConfidence]()
-		for fragment in fragmentList {
-			let tokens = getTokensForString(fragment.text)
-			tokenList += tokens.map({ ($0.token, $0.confidence * fragment.confidence) })
-		}
-		return tokenList
-	}
-
-	fileprivate class func bestTwo(_ list: [TokenConfidence] ) -> [TokenConfidence] {
+	fileprivate class func bestTwo(_ list: [TokenRectConfidence] ) -> [TokenRectConfidence] {
 		if list.count <= 2 {
 			return list
 		}
@@ -269,12 +352,12 @@ class HoursRecognizer {
 		}
 	}
 
-	fileprivate class func getHoursFromTokens(_ tokenList: [TokenConfidence]) -> String {
-		var days = [TokenConfidence]()
-		var times = [TokenConfidence]()
+	fileprivate class func getHoursFromTokens(_ tokenList: [TokenRectConfidence]) -> String {
+		var days = [TokenRectConfidence]()
+		var times = [TokenRectConfidence]()
 		var result = ""
 
-		for token in tokenList + [(.endOfText,0.0)] {
+		for token in tokenList + [(.endOfText,CGRect(),0.0)] {
 			switch token.token {
 			case .day, .endOfText:
 				if times.count >= 2 {
