@@ -209,7 +209,7 @@ struct Time {
 			}
 			return (Time(hour: iHour, minute: 0),
 					hour,
-					2.0)
+					1.0)
 		}
 		scanner.currentIndex = hour.startIndex
 		return nil
@@ -277,16 +277,17 @@ class HoursRecognizer {
 				  let observations = request.results as? [VNRecognizedTextObservation] else { return }
 			for observation in observations {
 				if let candidate = observation.topCandidates(1).first {
+
 					let tokens = getTokensForString(candidate.string)
 					let tokens2 = tokens.map({ item -> (token:Token,rect:CGRect,confidence:Float) in
-						let range = item.substring.startIndex..<item.substring.endIndex
-						let rect = try? candidate.boundingBox(for: range)?.boundingBox
+						let range = item.substring.startIndex ..< item.substring.endIndex
+						let rect = try! candidate.boundingBox(for: range)!.boundingBox
 						return (item.token,
-								rect!,
+								CGRect(x: rect.origin.y, y: rect.origin.x, width: rect.size.height, height: rect.size.width),
 								item.confidence * candidate.confidence)
 					})
 					let t = tokens2.map { "\($0.token)" }.joined(separator: " ")
-					print("\(candidate.string) -> \(t)")
+					print("\(candidate.confidence) \(candidate.string) -> \(t)")
 
 					list += tokens2
 				}
@@ -295,23 +296,34 @@ class HoursRecognizer {
 
 		request.recognitionLevel = .accurate
 //		request.customWords = ["AM","PM"]
-		request.usesLanguageCorrection = true
+//		request.usesLanguageCorrection = true
 		try? requestHandler.perform([request])
 
-		print("")
-		var allTokens = list.map { "\($0.token)" }.joined(separator: " ")
-		print("\(allTokens)")
-
-		// sort tokens left to right, then top to bottom
+		// sort tokens top to bottom, then left to right
 		list.sort {
 			if $0.rect.origin.y + $0.rect.size.height/2 < $1.rect.origin.y {
 				return true
 			}
-			return $0.rect.origin.x < $1.rect.origin.x
+			if $0.rect.origin.y - $0.rect.size.height/2 < $1.rect.origin.y &&
+				$0.rect.origin.y + $0.rect.size.height/2 > $1.rect.origin.y &&
+				$0.rect.origin.x < $1.rect.origin.x {
+				return true
+			}
+			return false
 		}
+
+		for t in list {
+			print("\(t.confidence)% (\(t.rect.origin.x),\(t.rect.origin.y)): \(t.token)")
+		}
+
+		#if false
+		print("")
+		var allTokens = list.map { "\($0.token)" }.joined(separator: " ")
+		print("\(allTokens)")
 
 		allTokens = list.map { "\($0.token)" }.joined(separator: " ")
 		print("\(allTokens)")
+		#endif
 
 		return list
 	}
