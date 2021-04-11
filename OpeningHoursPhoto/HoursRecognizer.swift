@@ -4,18 +4,17 @@
 //  Created by Bryce Cogswell on 4/5/21.
 //
 
-import SwiftUI
 import VisionKit
 import Vision
 
 extension String.StringInterpolation {
-	mutating func appendInterpolation(_ time: Time) {
+	fileprivate mutating func appendInterpolation(_ time: Time) {
 		appendLiteral(time.text)
 	}
-	mutating func appendInterpolation(_ dash: Dash) {
+	fileprivate mutating func appendInterpolation(_ dash: Dash) {
 		appendLiteral("-")
 	}
-	mutating func appendInterpolation(_ token: Token) {
+	fileprivate mutating func appendInterpolation(_ token: Token) {
 		switch token {
 		case let .day(day):
 			appendInterpolation(day)
@@ -30,7 +29,7 @@ extension String.StringInterpolation {
 }
 
 extension CharacterSet {
-	func contains(character: Character) -> Bool {
+	fileprivate func contains(character: Character) -> Bool {
 		for scaler in character.unicodeScalars {
 			if self.contains(scaler) {
 				return true
@@ -41,13 +40,13 @@ extension CharacterSet {
 }
 
 extension Substring {
-	static func from(_ start: Substring, to: Substring) -> Substring {
+	fileprivate static func from(_ start: Substring, to: Substring) -> Substring {
 		return start.base[ start.startIndex..<to.endIndex ]
 	}
 }
 
 // A version of Scanner that returns Substring instead of String
-class SubScanner {
+fileprivate class SubScanner {
 
 	let scanner: Scanner
 
@@ -127,7 +126,7 @@ class SubScanner {
 	}
 }
 
-enum Day: String {
+fileprivate enum Day: String {
 	case Mo = "Mo"
 	case Tu = "Tu"
 	case We = "We"
@@ -164,7 +163,7 @@ enum Day: String {
 	}
 }
 
-struct Time {
+fileprivate struct Time {
 	let text: String
 
 	init(hour: Int, minute:Int) {
@@ -216,7 +215,7 @@ struct Time {
 	}
 }
 
-struct Dash {
+fileprivate struct Dash {
 	static func scan(scanner: SubScanner) -> (Self,Substring,Float)? {
 		if let s = scanner.scanString("-") ?? scanner.scanWord("to") {
 			return (Dash(), s, Float(s.count))
@@ -225,10 +224,10 @@ struct Dash {
 	}
 }
 
-typealias TokenSubstringConfidence = (token:Token, substring:Substring, confidence:Float)
-typealias TokenRectConfidence = (token:Token, rect:CGRect, confidence:Float)
+fileprivate typealias TokenSubstringConfidence = (token:Token, substring:Substring, confidence:Float)
+fileprivate typealias TokenRectConfidence = (token:Token, rect:CGRect, confidence:Float)
 
-enum Token {
+fileprivate enum Token {
 	case time(Time)
 	case day(Day)
 	case dash(Dash)
@@ -248,87 +247,18 @@ enum Token {
 	}
 }
 
-class HoursRecognizer {
+class HoursRecognizer: ObservableObject {
 
-	var bbox: ((Range<String.Index>) -> (CGRect?))? = nil
+	@Published var text = "" {
+		willSet {
+			objectWillChange.send()
+		}
+	}
 
 	init() {
 	}
 
-	func hoursForImage(image: CGImage) -> String {
-		// get list of text strings in image
-		let requestHandler = VNImageRequestHandler(cgImage: image, options: [:])
-		let tokensList =  HoursRecognizer.getImageTokens(fromRequest: requestHandler)
-
-		// extract hours string from the tokens
-		let text = HoursRecognizer.getHoursFromTokens(tokensList)
-		return text
-	}
-
-	// Returns an array of string arrays.
-	// Each inner array is a possible interpretation of the text.
-	fileprivate class func getImageTokens(fromRequest requestHandler: VNImageRequestHandler) -> [TokenRectConfidence] {
-		var list = [TokenRectConfidence]()
-		print("")
-		print("")
-		print("")
-		let request = VNRecognizeTextRequest(completionHandler: { (request, error) in
-			guard error == nil,
-				  let observations = request.results as? [VNRecognizedTextObservation] else { return }
-			for observation in observations {
-				if let candidate = observation.topCandidates(1).first {
-
-					let tokens = getTokensForString(candidate.string)
-					let tokens2 = tokens.map({ item -> (token:Token,rect:CGRect,confidence:Float) in
-						let range = item.substring.startIndex ..< item.substring.endIndex
-						let rect = try! candidate.boundingBox(for: range)!.boundingBox
-						return (item.token,
-								CGRect(x: rect.origin.y, y: rect.origin.x, width: rect.size.height, height: rect.size.width),
-								item.confidence * candidate.confidence)
-					})
-					let t = tokens2.map { "\($0.token)" }.joined(separator: " ")
-					print("\(candidate.confidence) \(candidate.string) -> \(t)")
-
-					list += tokens2
-				}
-			}
-		})
-
-		request.recognitionLevel = .accurate
-//		request.customWords = ["AM","PM"]
-//		request.usesLanguageCorrection = true
-		try? requestHandler.perform([request])
-
-		// sort tokens top to bottom, then left to right
-		list.sort {
-			if $0.rect.origin.y + $0.rect.size.height/2 < $1.rect.origin.y {
-				return true
-			}
-			if $0.rect.origin.y - $0.rect.size.height/2 < $1.rect.origin.y &&
-				$0.rect.origin.y + $0.rect.size.height/2 > $1.rect.origin.y &&
-				$0.rect.origin.x < $1.rect.origin.x {
-				return true
-			}
-			return false
-		}
-
-		for t in list {
-			print("\(t.confidence)% (\(t.rect.origin.x),\(t.rect.origin.y)): \(t.token)")
-		}
-
-		#if false
-		print("")
-		var allTokens = list.map { "\($0.token)" }.joined(separator: " ")
-		print("\(allTokens)")
-
-		allTokens = list.map { "\($0.token)" }.joined(separator: " ")
-		print("\(allTokens)")
-		#endif
-
-		return list
-	}
-
-	fileprivate class func getTokensForString(_ string: String) -> [(token:Token,substring:Substring,confidence:Float)] {
+	private class func tokensForString(_ string: String) -> [(token:Token,substring:Substring,confidence:Float)] {
 		var list = [(Token,Substring,Float)]()
 		let scanner = SubScanner(string: string)
 		_ = scanner.scanWhitespace()
@@ -344,7 +274,87 @@ class HoursRecognizer {
 		return list
 	}
 
-	fileprivate class func bestTwo(_ list: [TokenRectConfidence] ) -> [TokenRectConfidence] {
+	private class func tokensForImage(observations: [VNRecognizedTextObservation], transform:((CGRect)->(CGRect))) -> [TokenRectConfidence] {
+		var list = [TokenRectConfidence]()
+		for observation in observations {
+			guard let candidate = observation.topCandidates(1).first else { continue }
+			// Each observation can contain text in disconnected parts of the screen,
+			// so we tokenize the string and extract the screen location of each token
+			let tokens = tokensForString(candidate.string)
+			let tokens2 = tokens.map({ item -> (token:Token,rect:CGRect,confidence:Float) in
+				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
+				let range = item.substring.startIndex ..< item.substring.endIndex
+				let rect = try! candidate.boundingBox(for: range)!.boundingBox
+				let rect2 = transform(rect)
+				// we also adjust the confidence of the tokenizer based on the confidence of the candidate
+				return (item.token,
+						rect2,
+						item.confidence * candidate.confidence)
+			})
+
+			#if false
+			// print the mapping of string to tokens
+			let t = tokens2.map { "\($0.token)" }.joined(separator: " ")
+			print("\(candidate.confidence) \(candidate.string) -> \(t)")
+			#endif
+
+			list += tokens2
+		}
+
+		// sort tokens top to bottom, then left to right
+		list.sort {
+			if $0.rect.origin.y + $0.rect.size.height/2 < $1.rect.origin.y {
+				return true
+			}
+			if $0.rect.origin.y - $0.rect.size.height/2 < $1.rect.origin.y &&
+				$0.rect.origin.y + $0.rect.size.height/2 > $1.rect.origin.y &&
+				$0.rect.origin.x < $1.rect.origin.x {
+				return true
+			}
+			return false
+		}
+
+		#if false
+		for t in list {
+			print("\(t.confidence)% (\(t.rect.origin.x),\(t.rect.origin.y)): \(t.token)")
+		}
+		#endif
+
+		return list
+	}
+
+	private func updateWithObservations(observations: [VNRecognizedTextObservation], transform:((CGRect)->(CGRect))) {
+		let tokens = HoursRecognizer.tokensForImage(observations: observations, transform: transform)
+		let text = HoursRecognizer.hoursStringForTokens( tokens )
+		DispatchQueue.main.async {
+			self.text = text
+		}
+	}
+
+	func updateWithLiveObservations(observations: [VNRecognizedTextObservation]) {
+		self.updateWithObservations(observations: observations,
+									   transform: { CGRect(x: $0.origin.x, y: 1.0-$0.origin.y, width: $0.size.width, height: $0.size.height) })
+	}
+
+	func setImage(image: CGImage) {
+		self.text = ""
+		let request = VNRecognizeTextRequest(completionHandler: { (request, error) in
+			guard error == nil,
+				  let observations = request.results as? [VNRecognizedTextObservation] else { return }
+			self.updateWithObservations(observations: observations, transform: {
+				// origin is top-right so rotate 90 degrees
+				return CGRect(x: $0.origin.y, y: $0.origin.x, width: $0.size.height, height: $0.size.width)
+			})
+		})
+		request.recognitionLevel = .accurate
+//		request.customWords = ["AM","PM"]
+//		request.usesLanguageCorrection = true
+		let requestHandler = VNImageRequestHandler(cgImage: image, options: [:])
+		try? requestHandler.perform([request])
+	}
+
+	// return a list where all items are removed except the two with highest confidence (preserving their order)
+	private class func bestTwo(_ list: [TokenRectConfidence] ) -> [TokenRectConfidence] {
 		if list.count <= 2 {
 			return list
 		}
@@ -364,7 +374,7 @@ class HoursRecognizer {
 		}
 	}
 
-	fileprivate class func getHoursFromTokens(_ tokenList: [TokenRectConfidence]) -> String {
+	private class func hoursStringForTokens(_ tokenList: [TokenRectConfidence]) -> String {
 		var days = [TokenRectConfidence]()
 		var times = [TokenRectConfidence]()
 		var result = ""
@@ -412,7 +422,10 @@ class HoursRecognizer {
 }
 
 class BulkProcess {
-	init(path:String) {
+	init() {
+	}
+
+	func processFolder(path:String) {
 		do {
 			let userDirectory = try FileManager.default.url(for: FileManager.SearchPathDirectory.downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
 			let imageDirectory = userDirectory.appendingPathComponent(path)
@@ -422,8 +435,8 @@ class BulkProcess {
 //				print("\(fileName.lastPathComponent):")
 				guard let image = UIImage(contentsOfFile: fileName.path),
 					  let cgImage = image.cgImage else { continue }
-				let hours = recognizer.hoursForImage(image: cgImage)
-				print("\"\(fileName.lastPathComponent)\" => \"\(hours)\"")
+				recognizer.setImage(image: cgImage)
+				print("\"\(fileName.lastPathComponent)\" => \"\(recognizer.text)\"")
 			}
 		} catch {
 			print(error.localizedDescription)

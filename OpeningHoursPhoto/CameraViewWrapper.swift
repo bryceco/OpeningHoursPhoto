@@ -9,21 +9,28 @@ import SwiftUI
 struct CameraViewWrapper: UIViewRepresentable {
 
 	@Binding var recognizedText: String
-	@Binding var capturePhoto: Bool
+	@Binding var capturePhoto: Bool			// set true to take a picture
+
+	@StateObject var recognizer = HoursRecognizer()
 
 	func makeUIView(context: Context) -> CameraView {
-		return CameraView(frame: .zero)
+		let cam = CameraView(frame: .zero)
+		cam.observationsCallback = { recognizer.updateWithLiveObservations( observations: $0 ) }
+		return cam
 	}
 
 	func updateUIView(_ uiView: CameraView, context: Context) {
 		if capturePhoto {
-			uiView.captureCallback = { image in
-				let hr = HoursRecognizer()
-				let text = hr.hoursForImage(image: image)
-				recognizedText = text
+			uiView.photoCallback = { image in
+				recognizer.setImage(image: image)
+				recognizedText = recognizer.text
 			}
 			capturePhoto = false
 			uiView.takePhoto(sender: nil)
+		}
+		if recognizedText != recognizer.text {
+			print("\(recognizer.text)")
+			recognizedText = recognizer.text
 		}
 	}
 

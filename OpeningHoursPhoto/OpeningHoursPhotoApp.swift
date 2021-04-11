@@ -9,6 +9,11 @@ import SwiftUI
 
 @main
 struct OpeningHoursPhotoApp: App {
+	init() {
+		let bulk = BulkProcess()
+		bulk.processFolder(path: "opening_hours/deduplicated")
+	}
+
     var body: some Scene {
         WindowGroup {
             ContentView()
