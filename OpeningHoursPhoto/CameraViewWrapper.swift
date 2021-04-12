@@ -22,7 +22,7 @@ struct CameraViewWrapper: UIViewRepresentable {
 	func updateUIView(_ uiView: CameraView, context: Context) {
 		if capturePhoto {
 			uiView.photoCallback = { image in
-				recognizer.setImage(image: image)
+				recognizer.setImage(image: image, isRotated: true)
 				recognizedText = recognizer.text
 			}
 			capturePhoto = false
