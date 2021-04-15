@@ -15,7 +15,9 @@ struct CameraViewWrapper: UIViewRepresentable {
 
 	func makeUIView(context: Context) -> CameraView {
 		let cam = CameraView(frame: .zero)
-		cam.observationsCallback = { recognizer.updateWithLiveObservations( observations: $0 ) }
+		cam.observationsCallback = { observations, camera in
+			recognizer.updateWithLiveObservations( observations: observations, camera: camera )
+		}
 		return cam
 	}
 
