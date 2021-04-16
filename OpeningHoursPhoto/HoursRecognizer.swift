@@ -56,6 +56,29 @@ extension Substring {
 	}
 }
 
+// return a list where all items are removed except the two with highest confidence (preserving their order)
+extension Array {
+	func bestTwo(_ isBetter: (_ lhs: Self.Element, _ rhs: Self.Element) -> Bool) -> [Self.Element] {
+		if self.count <= 2 {
+			return self
+		}
+		var b0 = 0
+		var b1 = 1
+		for i in 2..<self.count {
+			if isBetter( self[i], self[b0] ) {
+				b0 = i
+			} else if isBetter( self[i], self[b1]) {
+				b1 = i
+			}
+		}
+		if b0 < b1 {
+			return [self[b0], self[b1]]
+		} else {
+			return [self[b1], self[b0]]
+		}
+	}
+}
+
 // A version of Scanner that returns Substring instead of String
 fileprivate class SubScanner {
 
@@ -238,11 +261,15 @@ fileprivate struct Dash {
 fileprivate typealias TokenSubstringConfidence = (token:Token, substring:Substring, confidence:Float)
 fileprivate typealias TokenRectConfidence = (token:Token, rect:CGRect, confidence:Float)
 
-fileprivate enum Token {
+fileprivate enum Token : Equatable {
 	case time(Time)
 	case day(Day)
 	case dash(Dash)
 	case endOfText
+
+	static func == (lhs: Token, rhs: Token) -> Bool {
+		return "\(lhs)" == "\(rhs)"
+	}
 
 	func isDay() -> Bool {
 		switch self {
@@ -324,18 +351,22 @@ class HoursRecognizer: ObservableObject {
 			var index = 0
 			while index < lineTokens.endIndex {
 				let token = lineTokens[index]
-				lineTokens.removeAll(where: { $0.rect.overlap(token.rect) > overlapCutoff })
+				lineTokens.removeAll(where: { $0.token != token.token && $0.rect.overlap(token.rect) > overlapCutoff })
 				index = index + 1
 			}
-			// sort tokens on the line
+			// sort tokens on the line left-to-right
 			lineTokens.sort(by: { $0.rect.minX < $1.rect.minX })
 			// save the line of tokens
 			lines.append( lineTokens )
 		}
+
+		// sort lines top-to-bottom
+		lines.sort(by: {$0.first!.rect.minY < $1.first!.rect.minY} )
+
 		return lines
 	}
 
-	private class func tokensForImage(observations: [VNRecognizedTextObservation], transform:((CGRect)->(CGRect))) -> [TokenRectConfidence] {
+	private class func tokensForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [TokenRectConfidence] {
 		var list = [TokenRectConfidence]()
 		for observation in observations {
 			guard let candidate = observation.topCandidates(1).first else { continue }
@@ -346,7 +377,7 @@ class HoursRecognizer: ObservableObject {
 				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
 				let range = item.substring.startIndex ..< item.substring.endIndex
 				let rect = try! candidate.boundingBox(for: range)!.boundingBox
-				let rect2 = transform(rect)
+				let rect2 = rect.applying(transform)
 				// we also adjust the confidence of the tokenizer based on the confidence of the candidate
 				return (item.token,
 						rect2,
@@ -372,25 +403,32 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	private func updateWithObservations(observations: [VNRecognizedTextObservation],
-										transform: ((CGRect)->(CGRect)),
+										transform: CGAffineTransform,
 										camera: CameraView?)
 	{
+		#if false
+		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+		print("\(raw)")
+		#endif
+
 		let tokens = HoursRecognizer.tokensForImage(observations: observations, transform: transform)
+			.filter({ $0.token.isDay() || $0.token.isTime() })
 
 		if allTokens.isEmpty {
 			allTokens = tokens
 		} else {
 			// degrade all confidences
-			allTokens = allTokens.map({ ($0.token, $0.rect, $0.confidence * 0.9) })
-			allTokens = allTokens.filter({ $0.confidence > 0.08 })
+			allTokens = allTokens
+				.map({ ($0.token, $0.rect, $0.confidence * 0.7) })
+				.filter({ $0.confidence > 0.85 })
 
 			for token in tokens {
 				// scan for existing occurance
 				if let index = allTokens.firstIndex(where: { token.rect.overlap($0.rect) > 0.6 }) {
 					let overlap = allTokens[index]
-					if "\(overlap.token)" == "\(token.token)" {
+					if overlap.token == token.token {
 						// same token text, so increase it's confidence
-						allTokens[index] = (token.token, token.rect, token.confidence + overlap.confidence)
+						allTokens[index] = (token.token, token.rect, min(token.confidence + overlap.confidence,12.0))
 					} else {
 						allTokens.append(token)
 					}
@@ -401,32 +439,46 @@ class HoursRecognizer: ObservableObject {
 			}
 		}
 
+		#if false
 		let string = allTokens.map { "\($0.token)" }.joined(separator: " ")
 		print("\(string)")
+		#endif
 
 		let lines = HoursRecognizer.getTokenLines( allTokens )
 
-		let tokenBoxes = lines.joined().map({$0.rect})
-		camera?.addBoxes(boxes: tokenBoxes, color: UIColor.green)
-
-		print("")
+		// split the lines into discrete days/times sequences
+		var tokenSets = [[TokenRectConfidence]]()
 		for line in lines {
-			var s1 = ""
-			var s2 = ""
-			for t in line {
-				s1 += "\(t.token) "
-				s2 += "\(Float(Int(100.0*t.confidence))/100.0) "
+			tokenSets.append( [line.first!] )
+			for token in line[1...] {
+				if token.token.isDay() == tokenSets.last?.first?.token.isDay() ||
+					token.token.isTime() == tokenSets.last?.first?.token.isTime()
+				{
+					tokenSets[tokenSets.count-1].append(token)
+				} else {
+					tokenSets.append([token])
+				}
 			}
-			print("\(s1): \(s2)")
+			tokenSets.append([])
 		}
 
-		let sumDay = allTokens.filter({$0.token.isDay()}).reduce((0,0.0)) { sum, next in return (sum.0+1, sum.1 + next.confidence) }
-		let sumTime = allTokens.filter({$0.token.isTime()}).reduce((0,0.0)) { sum, next in return (sum.0+1, sum.1 + next.confidence) }
-		let cutoffDay = 0.5 * sumDay.1 / Float(sumDay.0)
-		let cutoffTime = 0.5 * sumTime.1 / Float(sumTime.0)
-		let goodTokens = allTokens.filter({ $0.confidence > ($0.token.isDay() ? cutoffDay : $0.token.isTime() ? cutoffTime : 1000.0) })
+		// if a set has multiple hours or multiple days then take only the best 2
+		tokenSets = tokenSets.map( { return $0.bestTwo( {$0.confidence > $1.confidence} ) })
 
-		let text = HoursRecognizer.hoursStringForTokens( goodTokens )
+		let invertedTransform = transform.inverted()
+		let tokenBoxes = lines.joined().map({$0.rect.applying(invertedTransform)})
+		camera?.addBoxes(boxes: tokenBoxes, color: UIColor.green)
+
+		#if false
+		print("")
+		for line in tokenSets {
+			let s1 = line.map( { "\($0.token)" }).joined(separator: " ")
+			let s2 = line.map( { "\(Float(Int(100.0*$0.confidence))/100.0)" }).joined(separator: " ")
+			print("\(s1): \(s2)")
+		}
+		#endif
+
+		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
 		if Thread.isMainThread {
 			self.text = text
 		} else {
@@ -438,7 +490,7 @@ class HoursRecognizer: ObservableObject {
 
 	func updateWithLiveObservations(observations: [VNRecognizedTextObservation], camera: CameraView?) {
 		self.updateWithObservations(observations: observations,
-									   transform: { CGRect(x: $0.origin.x, y: 1.0-$0.origin.y, width: $0.size.width, height: $0.size.height) },
+									transform: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: 1),
 									   camera: camera)
 	}
 
@@ -446,7 +498,10 @@ class HoursRecognizer: ObservableObject {
 		allTokens = []
 		self.text = ""
 
-		let transform = isRotated ? { CGRect(x: $0.origin.y, y: $0.origin.x, width: $0.size.height, height: $0.size.width) } : { $0 }
+//		let rotationTransform = CGAffineTransform(translationX: 0, y: 1).rotated(by: -CGFloat.pi / 2)
+
+		let transform = isRotated ? CGAffineTransform(scaleX: 1.0, y: -1.0).rotated(by: -CGFloat.pi / 2)
+									: CGAffineTransform.identity
 
 		let request = VNRecognizeTextRequest(completionHandler: { (request, error) in
 			guard error == nil,
@@ -460,64 +515,48 @@ class HoursRecognizer: ObservableObject {
 		try? requestHandler.perform([request])
 	}
 
-	// return a list where all items are removed except the two with highest confidence (preserving their order)
-	private class func bestTwo(_ list: [TokenRectConfidence] ) -> [TokenRectConfidence] {
-		if list.count <= 2 {
-			return list
-		}
-		var b0 = 0
-		var b1 = 1
-		for i in 2..<list.count {
-			if list[i].confidence > list[b0].confidence {
-				b0 = i
-			} else if list[i].confidence > list[b1].confidence {
-				b1 = i
-			}
-		}
-		if b0 < b1 {
-			return [list[b0], list[b1]]
-		} else {
-			return [list[b1], list[b0]]
-		}
-	}
 
-	private class func hoursStringForTokens(_ tokenList: [TokenRectConfidence]) -> String {
+	private class func hoursStringForTokens(_ tokenLines: [[TokenRectConfidence]]) -> String {
 		var days = [TokenRectConfidence]()
 		var times = [TokenRectConfidence]()
 		var result = ""
 
-		for token in tokenList + [(.endOfText,CGRect(),0.0)] {
-			switch token.token {
-			case .day, .endOfText:
-				if times.count >= 2 {
-					// output preceding days/times
-					if days.count > 0 {
-						if days.count == 2 {
-							// treat as a range of days
-							result += "\(days[0].token)-\(days[1].token)"
-						} else {
-							// treat as a list of days
-							result += days.reduce("", { result, next in
-								return result == "" ? "\(next.token)" : result + "," + "\(next.token)"
-							})
+		for line in tokenLines + [[(.endOfText,CGRect(),0.0)]] {
+			// each line should be 1 or more days, then 2 or more hours
+			for token in line  {
+				switch token.token {
+				case .day, .endOfText:
+					if times.count >= 2 {
+						// output preceding days/times
+						if days.count > 0 {
+							if days.count == 2 {
+								// treat as a range of days
+								result += "\(days[0].token)-\(days[1].token)"
+							} else {
+								// treat as a list of days
+								result += days.reduce("", { result, next in
+									return result == "" ? "\(next.token)" : result + "," + "\(next.token)"
+								})
+							}
+							result += " "
 						}
-						result += " "
-					}
-					times = bestTwo(times)
-					result += "\(times[0].token)-\(times[1].token)"
-					result += ", "
-				}
-				if times.count > 0 {
-					times = []
-					days = []
-				}
-				days.append(token)
+						times = times.bestTwo { $0.confidence > $1.confidence }
 
-			case .time:
-				times.append(token)
-				break
-			case .dash:
-				break
+						result += "\(times[0].token)-\(times[1].token)"
+						result += ", "
+					}
+					if times.count > 0 {
+						times = []
+						days = []
+					}
+					days.append(token)
+
+				case .time:
+					times.append(token)
+					break
+				case .dash:
+					break
+				}
 			}
 		}
 		if result.hasSuffix(", ") {
@@ -543,7 +582,7 @@ class BulkProcess {
 //				print("\(fileName.lastPathComponent):")
 				guard let image = UIImage(contentsOfFile: fileName.path),
 					  let cgImage = image.cgImage else { continue }
-				recognizer.setImage(image: cgImage, isRotated: false)
+				recognizer.setImage(image: cgImage, isRotated: true)
 				print("\"\(fileName.lastPathComponent)\" => \"\(recognizer.text)\"")
 			}
 		} catch {

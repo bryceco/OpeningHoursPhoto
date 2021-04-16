@@ -31,7 +31,6 @@ struct CameraViewWrapper: UIViewRepresentable {
 			uiView.takePhoto(sender: nil)
 		}
 		if recognizedText != recognizer.text {
-			print("\(recognizer.text)")
 			recognizedText = recognizer.text
 		}
 	}

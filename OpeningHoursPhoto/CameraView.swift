@@ -94,33 +94,41 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 	}
 
 	private var boxLayers = [CALayer]()
-	func resetBoxes() {
-		for layer in self.boxLayers {
-			layer.removeFromSuperlayer()
-		}
-		self.boxLayers.removeAll()
-	}
+	private var newBoxes = [(UIColor,[CGRect])]()
 	public func addBoxes( boxes: [CGRect], color: UIColor ) {
-		let rotationTransform = CGAffineTransform(translationX: 0, y: 1).rotated(by: -CGFloat.pi / 2)
-		let bottomToTopTransform = CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -1)
-		let visionToAVFTransform = CGAffineTransform.identity.concatenating(bottomToTopTransform).concatenating(rotationTransform)
-
+		newBoxes.append( (color,boxes) )
+	}
+	private func displayBoxes() {
 		DispatchQueue.main.async {
-			guard let previewLayer = self.layer.sublayers?.first as? AVCaptureVideoPreviewLayer else { return }
-			for box in boxes {
-				let rect = previewLayer.layerRectConverted(fromMetadataOutputRect: box.applying(visionToAVFTransform))
-				let layer = CAShapeLayer()
-				layer.opacity = 1.0
-				layer.borderColor = color.cgColor
-				layer.borderWidth = 2
-				layer.frame = rect
-				self.boxLayers.append(layer)
-				previewLayer.insertSublayer(layer, at: 1)
+			// remove current boxes
+			for layer in self.boxLayers {
+				layer.removeFromSuperlayer()
 			}
+			self.boxLayers.removeAll()
+
+			// add new boxes
+			let rotationTransform = CGAffineTransform(translationX: 0, y: 1).rotated(by: -CGFloat.pi / 2)
+			let bottomToTopTransform = CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -1)
+			let visionToAVFTransform = CGAffineTransform.identity.concatenating(bottomToTopTransform).concatenating(rotationTransform)
+
+			guard let previewLayer = self.layer.sublayers?.first as? AVCaptureVideoPreviewLayer else { return }
+			for (color,boxes) in self.newBoxes {
+				for box in boxes {
+					let rect = previewLayer.layerRectConverted(fromMetadataOutputRect: box.applying(visionToAVFTransform))
+					let layer = CAShapeLayer()
+					layer.opacity = 1.0
+					layer.borderColor = color.cgColor
+					layer.borderWidth = 2
+					layer.frame = rect
+					self.boxLayers.append(layer)
+					previewLayer.addSublayer(layer)
+				}
+			}
+			self.newBoxes.removeAll()
 		}
 	}
 
-	private func showBoxes(forObservations results: [VNRecognizedTextObservation]) {
+	private func addBoxes(forObservations results: [VNRecognizedTextObservation]) {
 		var boxes = [CGRect]()
 		for result in results {
 			guard let candidate = result.topCandidates(1).first else { continue }
@@ -140,9 +148,9 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 
 		let request = VNRecognizeTextRequest(completionHandler: {request, error in
 			guard let results = request.results as? [VNRecognizedTextObservation] else { return }
-			self.resetBoxes()
-			self.showBoxes(forObservations: results)
+			self.addBoxes(forObservations: results)
 			self.observationsCallback?(results,self)
+			self.displayBoxes()
 		})
 		request.recognitionLevel = .accurate
 //		request.usesLanguageCorrection = false

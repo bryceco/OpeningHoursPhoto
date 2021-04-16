@@ -44,8 +44,9 @@ struct ContentView: View {
 					CameraViewWrapper(recognizedText: self.$recognizedText,
 									  capturePhoto: $capturePhoto)
 						.background(Color.blue)
-					Text(self.recognizedText)
 					Spacer()
+					Text(self.recognizedText)
+						.frame(height: 200.0)
 					Button("Capture") {
 						capturePhoto = true
 					}
