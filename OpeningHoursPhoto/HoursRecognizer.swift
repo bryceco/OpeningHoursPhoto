@@ -304,7 +304,8 @@ fileprivate enum Token : Equatable {
 
 class HoursRecognizer: ObservableObject {
 
-	private var allTokens = [TokenRectConfidence]()
+	private var tokenHistory = [TokenRectConfidence]()
+	private var resultHistory = [String:Int]()
 
 	@Published var text = "" {
 		willSet {
@@ -406,7 +407,7 @@ class HoursRecognizer: ObservableObject {
 										transform: CGAffineTransform,
 										camera: CameraView?)
 	{
-		#if false
+		#if true
 		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
 		print("\(raw)")
 		#endif
@@ -414,37 +415,38 @@ class HoursRecognizer: ObservableObject {
 		let tokens = HoursRecognizer.tokensForImage(observations: observations, transform: transform)
 			.filter({ $0.token.isDay() || $0.token.isTime() })
 
-		if allTokens.isEmpty {
-			allTokens = tokens
+		if tokenHistory.isEmpty {
+			tokenHistory = tokens
 		} else {
 			// degrade all confidences
-			allTokens = allTokens
+			tokenHistory = tokenHistory
 				.map({ ($0.token, $0.rect, $0.confidence * 0.7) })
 				.filter({ $0.confidence > 0.85 })
 
 			for token in tokens {
 				// scan for existing occurance
-				if let index = allTokens.firstIndex(where: { token.rect.overlap($0.rect) > 0.6 }) {
-					let overlap = allTokens[index]
+				if let index = tokenHistory.firstIndex(where: { token.rect.overlap($0.rect) > 0.6 }) {
+					let overlap = tokenHistory[index]
 					if overlap.token == token.token {
 						// same token text, so increase it's confidence
-						allTokens[index] = (token.token, token.rect, min(token.confidence + overlap.confidence,12.0))
+						tokenHistory[index] = (token.token, token.rect, min(token.confidence + overlap.confidence,12.0))
 					} else {
-						allTokens.append(token)
+						tokenHistory.append(token)
 					}
 				} else {
 
-					allTokens.append(token)
+					tokenHistory.append(token)
 				}
 			}
 		}
 
 		#if false
-		let string = allTokens.map { "\($0.token)" }.joined(separator: " ")
+		let string = tokenHistory.map { "\($0.token)" }.joined(separator: " ")
 		print("\(string)")
 		#endif
 
-		let lines = HoursRecognizer.getTokenLines( allTokens )
+		let lines = HoursRecognizer.getTokenLines( tokenHistory )
+		tokenHistory.removeAll()
 
 		// split the lines into discrete days/times sequences
 		var tokenSets = [[TokenRectConfidence]]()
@@ -479,11 +481,19 @@ class HoursRecognizer: ObservableObject {
 		#endif
 
 		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
+
+		print("\(text)")
+
+		let count = resultHistory[text] ?? 0
+		resultHistory[text] = count+1
+
+		let best = resultHistory.max { $0.value < $1.value }?.key ?? ""
+
 		if Thread.isMainThread {
-			self.text = text
+			self.text = best
 		} else {
 			DispatchQueue.main.async {
-				self.text = text
+				self.text = best
 			}
 		}
 	}
@@ -495,7 +505,7 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	func setImage(image: CGImage, isRotated: Bool) {
-		allTokens = []
+		tokenHistory = []
 		self.text = ""
 
 //		let rotationTransform = CGAffineTransform(translationX: 0, y: 1).rotated(by: -CGFloat.pi / 2)
