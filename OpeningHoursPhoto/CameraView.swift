@@ -131,9 +131,9 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 	private func addBoxes(forObservations results: [VNRecognizedTextObservation]) {
 		var boxes = [CGRect]()
 		for result in results {
-			guard let candidate = result.topCandidates(1).first else { continue }
-			let range = candidate.string.startIndex..<candidate.string.endIndex
-			if let box = try? candidate.boundingBox(for: range)?.boundingBox {
+			if let candidate = result.topCandidates(1).first,
+			   let box = try? candidate.boundingBox(for: candidate.string.startIndex..<candidate.string.endIndex)?.boundingBox
+			{
 				boxes.append( box )
 			}
 		}

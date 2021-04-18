@@ -333,7 +333,7 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	// split the list of sorted tokens into lines of text
-	private class func getTokenLines( _ allTokens: [TokenRectConfidence] ) -> [[TokenRectConfidence]] {
+	private class func getTokenLinesOld( _ allTokens: [TokenRectConfidence] ) -> [[TokenRectConfidence]] {
 		var lines = [[TokenRectConfidence]]()
 
 		let overlapCutoff:Float = 0.3
@@ -348,11 +348,12 @@ class HoursRecognizer: ObservableObject {
 			let lineY = best.rect.minY...best.rect.maxY
 			var lineTokens = allTokens.filter { lineY.contains( $0.rect.midY ) }
 			allTokens.removeAll(where: { 		lineY.contains( $0.rect.midY ) })
-			// remove overlapping tokens
+			// remove overlapping tokens in the line, prioritizing highest confidence
+			// this shouldn't be necessary unless we're combining tokens from multiple images
 			var index = 0
 			while index < lineTokens.endIndex {
 				let token = lineTokens[index]
-				lineTokens.removeAll(where: { $0.token != token.token && $0.rect.overlap(token.rect) > overlapCutoff })
+				lineTokens.removeAll(where: { $0 != token && $0.rect.overlap(token.rect) > overlapCutoff })
 				index = index + 1
 			}
 			// sort tokens on the line left-to-right
@@ -367,6 +368,80 @@ class HoursRecognizer: ObservableObject {
 		return lines
 	}
 
+	// split the list of sorted tokens into lines of text
+	private class func getTokenLines2( _ allTokens: [TokenRectConfidence] ) -> [[TokenRectConfidence]] {
+		var lines = [[TokenRectConfidence]]()
+
+		// sort tokens left to right
+		var allTokens = allTokens.sorted(by: {$0.rect.minX < $1.rect.minX})
+
+		while !allTokens.isEmpty {
+			// get highest confidence token
+			let bestIndex = allTokens.indices.max(by:  {allTokens[$0].confidence < allTokens[$1].confidence})!
+
+			// get token to the left and right
+			let lower = (allTokens.startIndex..<bestIndex).reversed().first {
+				let prevRect = allTokens[$0+1].rect
+				let thisRect = allTokens[$0].rect
+				return !(prevRect.minY...prevRect.maxY).contains(thisRect.midY)
+			}?.advanced(by: 1) ?? 0
+			let upper = (bestIndex+1..<allTokens.endIndex).first {
+				let prevRect = allTokens[$0-1].rect
+				let thisRect = allTokens[$0].rect
+				return !(prevRect.minY...prevRect.maxY).contains(thisRect.midY)
+			} ?? allTokens.endIndex
+			let line = Array(allTokens[lower..<upper])
+			// save the line of tokens
+			lines.append( line )
+			allTokens.removeSubrange(lower..<upper)
+		}
+
+		// sort lines top-to-bottom
+		lines.sort(by: {$0.first!.rect.minY < $1.first!.rect.minY} )
+
+		return lines
+	}
+
+	// split the list of sorted tokens into lines of text
+	private class func getTokenLines( _ allTokens: [TokenRectConfidence] ) -> [[TokenRectConfidence]] {
+		var lines = [[TokenRectConfidence]]()
+
+		// sort with highest confidence first
+		var stack = [ ArraySlice(allTokens) ]
+
+		while let list = stack.popLast() {
+
+			if list.count == 0 {
+				continue
+			}
+
+			// get highest confidence token
+			let bestIndex = list.indices.max(by: {list[$0].confidence < list[$1].confidence})!
+
+			// find all other tokens on the same line
+			let lower = (list.startIndex..<bestIndex).reversed().first(where: {
+				let prevRect = list[$0+1].rect
+				let thisRect = list[$0].rect
+				return !(thisRect.maxX <= prevRect.minX && (prevRect.minY...prevRect.maxY).contains( thisRect.midY ))
+			})?.advanced(by: 1) ?? list.startIndex
+			let upper = (bestIndex+1..<list.endIndex).first(where: {
+				let prevRect = list[$0-1].rect
+				let thisRect = list[$0].rect
+				return !(thisRect.minX >= prevRect.maxX && (prevRect.minY...prevRect.maxY).contains( thisRect.midY ))
+			}) ?? list.endIndex
+
+			// save the line of tokens
+			lines.append( Array( list[lower..<upper] ) )
+
+			stack.append( list[..<lower] )
+			stack.append( list[upper...] )
+		}
+
+		// sort lines top-to-bottom
+		lines.sort(by: {$0.first!.rect.minY < $1.first!.rect.minY} )
+
+		return lines
+	}
 	private class func tokensForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [TokenRectConfidence] {
 		var list = [TokenRectConfidence]()
 		for observation in observations {
@@ -385,20 +460,8 @@ class HoursRecognizer: ObservableObject {
 						item.confidence * candidate.confidence)
 			})
 
-			#if false
-			// print the mapping of string to tokens
-			let t = tokens2.map { "\($0.token)" }.joined(separator: " ")
-			print("\(candidate.confidence) \(candidate.string) -> \(t)")
-			#endif
-
 			list += tokens2
 		}
-
-		#if false
-		for t in list {
-			print("\(t.confidence)% (\(t.rect.origin.x),\(t.rect.origin.y)): \(t.token)")
-		}
-		#endif
 
 		return list
 	}
@@ -448,13 +511,19 @@ class HoursRecognizer: ObservableObject {
 		let lines = HoursRecognizer.getTokenLines( tokenHistory )
 		tokenHistory.removeAll()
 
+		print("")
+		print("lines:")
+		for s in lines.map({ $0.map({return "\($0.token)"}).joined(separator: " ")}) {
+			print("\(s)")
+		}
+
 		// split the lines into discrete days/times sequences
 		var tokenSets = [[TokenRectConfidence]]()
 		for line in lines {
 			tokenSets.append( [line.first!] )
 			for token in line[1...] {
 				if token.token.isDay() == tokenSets.last?.first?.token.isDay() ||
-					token.token.isTime() == tokenSets.last?.first?.token.isTime()
+				   token.token.isTime() == tokenSets.last?.first?.token.isTime()
 				{
 					tokenSets[tokenSets.count-1].append(token)
 				} else {
@@ -463,13 +532,30 @@ class HoursRecognizer: ObservableObject {
 			}
 			tokenSets.append([])
 		}
+		tokenSets = tokenSets.filter { $0.count > 0 }
 
-		// if a set has multiple hours or multiple days then take only the best 2
-		tokenSets = tokenSets.map( { return $0.bestTwo( {$0.confidence > $1.confidence} ) })
+		// if a sequence has multiple days then take only the best 2
+		tokenSets = tokenSets.map( { return $0.first!.token.isDay() ? $0.bestTwo( {$0.confidence > $1.confidence} ) : $0 })
 
-		let invertedTransform = transform.inverted()
-		let tokenBoxes = lines.joined().map({$0.rect.applying(invertedTransform)})
-		camera?.addBoxes(boxes: tokenBoxes, color: UIColor.green)
+		// if a sequence has multiple times then take only the best 2 that are reasonably close together
+		tokenSets = tokenSets.compactMap( {
+			if !$0.first!.token.isTime() || $0.count < 2 { return $0 }	// anything not a time sequence return as-is
+			let best = $0.bestTwo( {$0.confidence > $1.confidence} )
+			if best.count == 1 {
+				// don't permit an uncoupled time
+				return nil
+			}
+			if ((best[1].rect.minX - best[0].rect.maxX) / (best[1].rect.maxX - best[0].rect.minX) > 0.8) {
+				// the distance between the times is too large
+				print("\((best[1].rect.minX - best[0].rect.maxX) / (best[1].rect.maxX - best[0].rect.minX))")
+				return nil
+			}
+			print("\(best[1].token)")
+			if "\(best[1].token)" == "10:00" {
+				print("bad")
+			}
+			return best
+		})
 
 		#if false
 		print("")
@@ -480,9 +566,23 @@ class HoursRecognizer: ObservableObject {
 		}
 		#endif
 
+		print("")
+		print("sequences:")
+		for s in tokenSets.map({ $0.map({return "\($0.token)"}).joined(separator: " ")}) {
+			print("\(s)")
+		}
+
+		let invertedTransform = transform.inverted()
+		let tokenBoxes = tokenSets.joined().map({$0.rect.applying(invertedTransform)})
+		camera?.addBoxes(boxes: tokenBoxes, color: UIColor.green)
+
 		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
 
 		print("\(text)")
+
+		if text.contains("10:00-10:00") {
+			print("bad")
+		}
 
 		let count = resultHistory[text] ?? 0
 		resultHistory[text] = count+1
