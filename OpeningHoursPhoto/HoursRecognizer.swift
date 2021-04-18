@@ -567,17 +567,9 @@ class HoursRecognizer: ObservableObject {
 			}
 			let words = candidate.string.split(separator: " ")
 			let words2 = words.map({ word -> SubstringRectConfidence in
-				#if true
-				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
-				let range = word.startIndex ..< word.endIndex
-				let rect = try! candidate.boundingBox(for: range)!.boundingBox
-				let rect2 = rect.applying(transform)
-				return (word, rect2, rectf, candidate.confidence)
-				#else
 				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
 				let rect = rectf( word.startIndex ..< word.endIndex )
 				return (word, rect, rectf, candidate.confidence)
-				#endif
 			})
 			wordList += words2
 		}
@@ -589,22 +581,25 @@ class HoursRecognizer: ObservableObject {
 										camera: CameraView?)
 	{
 		#if true
-		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
 		Swift.print("\"\(raw)\"")
 		#endif
 
 		// get strings and locations
 		let strings = HoursRecognizer.stringsForImage(observations: observations, transform: transform)
 
+		#if false
 		print("")
 		print("strings:")
 		for s in strings {
 			print("\(s.substring): \(s.rect)")
 		}
+		#endif
 
 		// split into lines of text
 		let stringLines = HoursRecognizer.getStringLines( strings )
 
+		#if false
 		print("")
 		print("string lines:")
 		for line in stringLines {
@@ -612,20 +607,25 @@ class HoursRecognizer: ObservableObject {
 			let s2 = line.map({"\($0.rect)"}).joined(separator: " ")
 			print("\(s1): \(s2)")
 		}
+		#endif
 
 		// convert lines of strings to lines of tokens
 		let tokenLines = stringLines.compactMap { line -> [TokenRectConfidence]? in
 			let tokens = HoursRecognizer.tokensForString( line )
 			let tokens2 = tokens.filter({ $0.token.isDay() || $0.token.isTime() })
-			let tokens3 = tokens2.map({ ($0.token, CGRect(), $0.confidence) })
+			let tokens3 = tokens2.map({ ($0.token, $0.rect, $0.confidence) })
 			return tokens3.count > 0 ? tokens3 : nil
 		}
 
+		#if false
 		print("")
 		print("token lines:")
-		for s in tokenLines.map({ $0.map({return "\($0.token)"}).joined(separator: " ")}) {
-			print("\(s)")
+		for s in tokenLines {
+			let s1 = s.map({ return "\($0.token)"}).joined(separator: " ")
+			let s2 = s.map({ "\($0.rect)"}).joined(separator: " ")
+			print("\(s1): \(s2)")
 		}
+		#endif
 
 		// split the lines into discrete days/times sequences
 		var tokenSets = [[TokenRectConfidence]]()
