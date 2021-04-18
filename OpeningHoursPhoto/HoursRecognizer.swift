@@ -79,6 +79,105 @@ extension Array {
 	}
 }
 
+typealias SubstringRectf = (string:Substring,rect:(Range<String.Index>)->CGRect)
+typealias StringRect = (string:Substring,rect:CGRect)
+
+// A version of Scanner that returns a rect for each string
+fileprivate class RectScanner {
+
+	let substring: Substring
+	let scanner: Scanner
+	let rectf:(Range<String.Index>)->CGRect
+
+	init(substring: Substring, rect:@escaping (Range<String.Index>)->CGRect) {
+		self.substring = substring
+		self.scanner = Scanner(string: String(substring))
+		self.scanner.caseSensitive = false
+		self.scanner.charactersToBeSkipped = nil
+		self.rectf = rect
+	}
+
+	static let allLetters = CharacterSet.uppercaseLetters.union(CharacterSet.lowercaseLetters)
+
+	var currentIndex: String.Index {
+		get { scanner.currentIndex }
+		set { scanner.currentIndex = newValue }
+	}
+
+	var isAtEnd: Bool {
+		get { scanner.isAtEnd }
+	}
+
+	func result(_ sub:Substring) -> (Substring,CGRect) {
+		let d1 = sub.distance(from: sub.startIndex, to: sub.base.startIndex)
+		let d2 = sub.distance(from: sub.endIndex, to: sub.base.startIndex)
+		let p1 = substring.index(substring.startIndex, offsetBy: d1)
+		let p2 = substring.index(substring.startIndex, offsetBy: d2)
+		let rect = rectf(p1..<p2)
+		return (sub,rect)
+	}
+
+	func scanString(_ string: String) -> StringRect? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanString(string) {
+			return result(scanner.string[index..<scanner.currentIndex])
+		}
+		return nil
+	}
+
+	func scanWhitespace() -> StringRect? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanCharacters(from: CharacterSet.whitespacesAndNewlines) {
+			return result(scanner.string[index..<scanner.currentIndex])
+		}
+		return nil
+	}
+
+	func scanUpToWhitespace() -> StringRect? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanUpToCharacters(from: CharacterSet.whitespacesAndNewlines) {
+			return result(scanner.string[index..<scanner.currentIndex])
+		}
+		return nil
+	}
+
+	func scanInt() -> StringRect? {
+		let index = scanner.currentIndex
+		if let _ = scanner.scanInt() {
+			return result(scanner.string[index..<scanner.currentIndex])
+		}
+		return nil
+	}
+
+	func scanWord(_ word: String) -> StringRect? {
+		if let sub = scanString(word) {
+			if sub.string.endIndex < scanner.string.endIndex {
+				let c = scanner.string[sub.string.endIndex]
+				if SubScanner.allLetters.contains(character: c) {
+					// it's part of a larger word
+					scanner.currentIndex = sub.string.startIndex
+					return nil
+				}
+			}
+			return sub
+		}
+		return nil
+	}
+
+	func scanAnyWord(_ words: [String]) -> StringRect? {
+		for word in words {
+			if let sub = scanWord(word) {
+				return sub
+			}
+		}
+		return nil
+	}
+
+	func remainder() -> String {
+		return String(scanner.string[scanner.currentIndex...])
+	}
+}
+
 // A version of Scanner that returns Substring instead of String
 fileprivate class SubScanner {
 
@@ -157,6 +256,87 @@ fileprivate class SubScanner {
 	}
 	func remainder() -> String {
 		return String(scanner.string[scanner.currentIndex...])
+	}
+}
+
+// A version of Scanner that accepts an array of substrings and can extract rectangles for them
+fileprivate class MultiScanner {
+
+	let strings: [SubstringRectf]
+	let scanners: [RectScanner]
+	var scannerIndex: Int
+
+	init(strings: [SubstringRectf]) {
+		self.strings = strings
+		self.scanners = strings.map { RectScanner(substring: $0.string, rect:$0.rect) }
+		self.scannerIndex = 0
+	}
+
+	var currentIndex: (scanner:Int, index:String.Index) {
+		get { (scannerIndex, scanners[scannerIndex].currentIndex) }
+		set { scannerIndex = newValue.0
+			scanners[scannerIndex].currentIndex = newValue.1 }
+	}
+
+	var scanner:RectScanner {
+		get {
+			while scanners[scannerIndex].isAtEnd && scannerIndex+1 < scanners.count {
+				scannerIndex += 1
+			}
+			return scanners[scannerIndex]
+		}
+	}
+
+	var isAtEnd: Bool {
+		get {
+			return scanner.isAtEnd
+		}
+	}
+
+	func scanString(_ string: String) -> StringRect? {
+		if let sub = scanner.scanString(string) {
+			return sub
+		}
+		return nil
+	}
+
+	func scanWhitespace() -> StringRect? {
+		if let sub = scanner.scanWhitespace() {
+			return sub
+		}
+		return nil
+	}
+
+	func scanUpToWhitespace() -> StringRect? {
+		if let sub = scanner.scanUpToWhitespace() {
+			return sub
+		}
+		return nil
+	}
+
+	func scanInt() -> StringRect? {
+		if let sub = scanner.scanInt() {
+			return sub
+		}
+		return nil
+	}
+
+	func scanWord(_ word: String) -> StringRect? {
+		if let sub = scanner.scanWord( word ) {
+			return sub
+		}
+		return nil
+	}
+
+	func scanAnyWord(_ words: [String]) -> StringRect? {
+		if let sub = scanner.scanAnyWord(words) {
+			return sub
+		}
+		return nil
+	}
+
+	func remainder() -> String {
+		return scanner.remainder() + scanners[scannerIndex...].map({$0.remainder()}).joined(separator: " ")
 	}
 }
 
@@ -258,6 +438,7 @@ fileprivate struct Dash {
 	}
 }
 
+fileprivate typealias SubstringRectConfidence = (substring:Substring, rect:CGRect, confidence:Float)
 fileprivate typealias TokenSubstringConfidence = (token:Token, substring:Substring, confidence:Float)
 fileprivate typealias TokenRectConfidence = (token:Token, rect:CGRect, confidence:Float)
 
@@ -333,8 +514,8 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	// split the list of sorted tokens into lines of text
-	private class func getStringLines( _ allStrings: [StringRectConfidence] ) -> [[StringRectConfidence]] {
-		var lines = [[StringRectConfidence]]()
+	private class func getStringLines( _ allStrings: [SubstringRectConfidence] ) -> [[SubstringRectConfidence]] {
+		var lines = [[SubstringRectConfidence]]()
 
 		// sort with highest confidence first
 		var stack = [ ArraySlice(allStrings) ]
@@ -373,8 +554,7 @@ class HoursRecognizer: ObservableObject {
 		return lines
 	}
 
-	typealias StringRectConfidence = (substring:Substring, rect:CGRect, confidence:Float)
-	private class func stringsForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [StringRectConfidence] {
+	private class func stringsForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [SubstringRectConfidence] {
 		var wordList = [(Substring,CGRect,Float)]()
 		for observation in observations {
 			guard let candidate = observation.topCandidates(1).first else { continue }
