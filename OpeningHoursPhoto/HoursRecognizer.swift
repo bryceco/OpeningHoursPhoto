@@ -304,7 +304,6 @@ fileprivate enum Token : Equatable {
 
 class HoursRecognizer: ObservableObject {
 
-	private var tokenHistory = [TokenRectConfidence]()
 	private var resultHistory = [String:Int]()
 
 	@Published var text = "" {
@@ -317,7 +316,8 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	private class func tokensForString(_ string: String) -> [TokenSubstringConfidence] {
-		var list = [(Token,Substring,Float)]()
+		var list = [TokenSubstringConfidence]()
+
 		let scanner = SubScanner(string: string)
 		_ = scanner.scanWhitespace()
 		while !scanner.isAtEnd {
@@ -333,81 +333,11 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	// split the list of sorted tokens into lines of text
-	private class func getTokenLinesOld( _ allTokens: [TokenRectConfidence] ) -> [[TokenRectConfidence]] {
-		var lines = [[TokenRectConfidence]]()
-
-		let overlapCutoff:Float = 0.3
+	private class func getStringLines( _ allStrings: [StringRectConfidence] ) -> [[StringRectConfidence]] {
+		var lines = [[StringRectConfidence]]()
 
 		// sort with highest confidence first
-		var allTokens = allTokens.sorted(by: {$0.confidence > $1.confidence})
-
-		while !allTokens.isEmpty {
-			// get highest confidence token
-			let best = allTokens.first!
-			// find all other tokens on the same line
-			let lineY = best.rect.minY...best.rect.maxY
-			var lineTokens = allTokens.filter { lineY.contains( $0.rect.midY ) }
-			allTokens.removeAll(where: { 		lineY.contains( $0.rect.midY ) })
-			// remove overlapping tokens in the line, prioritizing highest confidence
-			// this shouldn't be necessary unless we're combining tokens from multiple images
-			var index = 0
-			while index < lineTokens.endIndex {
-				let token = lineTokens[index]
-				lineTokens.removeAll(where: { $0 != token && $0.rect.overlap(token.rect) > overlapCutoff })
-				index = index + 1
-			}
-			// sort tokens on the line left-to-right
-			lineTokens.sort(by: { $0.rect.minX < $1.rect.minX })
-			// save the line of tokens
-			lines.append( lineTokens )
-		}
-
-		// sort lines top-to-bottom
-		lines.sort(by: {$0.first!.rect.minY < $1.first!.rect.minY} )
-
-		return lines
-	}
-
-	// split the list of sorted tokens into lines of text
-	private class func getTokenLines2( _ allTokens: [TokenRectConfidence] ) -> [[TokenRectConfidence]] {
-		var lines = [[TokenRectConfidence]]()
-
-		// sort tokens left to right
-		var allTokens = allTokens.sorted(by: {$0.rect.minX < $1.rect.minX})
-
-		while !allTokens.isEmpty {
-			// get highest confidence token
-			let bestIndex = allTokens.indices.max(by:  {allTokens[$0].confidence < allTokens[$1].confidence})!
-
-			// get token to the left and right
-			let lower = (allTokens.startIndex..<bestIndex).reversed().first {
-				let prevRect = allTokens[$0+1].rect
-				let thisRect = allTokens[$0].rect
-				return !(prevRect.minY...prevRect.maxY).contains(thisRect.midY)
-			}?.advanced(by: 1) ?? 0
-			let upper = (bestIndex+1..<allTokens.endIndex).first {
-				let prevRect = allTokens[$0-1].rect
-				let thisRect = allTokens[$0].rect
-				return !(prevRect.minY...prevRect.maxY).contains(thisRect.midY)
-			} ?? allTokens.endIndex
-			let line = Array(allTokens[lower..<upper])
-			// save the line of tokens
-			lines.append( line )
-			allTokens.removeSubrange(lower..<upper)
-		}
-
-		// sort lines top-to-bottom
-		lines.sort(by: {$0.first!.rect.minY < $1.first!.rect.minY} )
-
-		return lines
-	}
-
-	// split the list of sorted tokens into lines of text
-	private class func getTokenLines( _ allTokens: [TokenRectConfidence] ) -> [[TokenRectConfidence]] {
-		var lines = [[TokenRectConfidence]]()
-
-		// sort with highest confidence first
-		var stack = [ ArraySlice(allTokens) ]
+		var stack = [ ArraySlice(allStrings) ]
 
 		while let list = stack.popLast() {
 
@@ -415,7 +345,7 @@ class HoursRecognizer: ObservableObject {
 				continue
 			}
 
-			// get highest confidence token
+			// get highest confidence string
 			let bestIndex = list.indices.max(by: {list[$0].confidence < list[$1].confidence})!
 
 			// find all other tokens on the same line
@@ -430,7 +360,7 @@ class HoursRecognizer: ObservableObject {
 				return !(thisRect.minX >= prevRect.maxX && (prevRect.minY...prevRect.maxY).contains( thisRect.midY ))
 			}) ?? list.endIndex
 
-			// save the line of tokens
+			// save the line of strings
 			lines.append( Array( list[lower..<upper] ) )
 
 			stack.append( list[..<lower] )
@@ -442,28 +372,25 @@ class HoursRecognizer: ObservableObject {
 
 		return lines
 	}
-	private class func tokensForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [TokenRectConfidence] {
-		var list = [TokenRectConfidence]()
+
+	typealias StringRectConfidence = (substring:Substring, rect:CGRect, confidence:Float)
+	private class func stringsForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [StringRectConfidence] {
+		var wordList = [(Substring,CGRect,Float)]()
 		for observation in observations {
 			guard let candidate = observation.topCandidates(1).first else { continue }
 			// Each observation can contain text in disconnected parts of the screen,
 			// so we tokenize the string and extract the screen location of each token
-			let tokens = tokensForString(candidate.string)
-			let tokens2 = tokens.map({ item -> (token:Token,rect:CGRect,confidence:Float) in
+			let words = candidate.string.split(separator: " ")
+			let words2 = words.map({ word -> (Substring,CGRect,Float) in
 				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
-				let range = item.substring.startIndex ..< item.substring.endIndex
+				let range = word.startIndex ..< word.endIndex
 				let rect = try! candidate.boundingBox(for: range)!.boundingBox
 				let rect2 = rect.applying(transform)
-				// we also adjust the confidence of the tokenizer based on the confidence of the candidate
-				return (item.token,
-						rect2,
-						item.confidence * candidate.confidence)
+				return (word, rect2, candidate.confidence)
 			})
-
-			list += tokens2
+			wordList += words2
 		}
-
-		return list
+		return wordList
 	}
 
 	private func updateWithObservations(observations: [VNRecognizedTextObservation],
@@ -471,55 +398,34 @@ class HoursRecognizer: ObservableObject {
 										camera: CameraView?)
 	{
 		#if true
-		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-		print("\(raw)")
+		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+		Swift.print("\"\(raw)\"")
 		#endif
 
-		let tokens = HoursRecognizer.tokensForImage(observations: observations, transform: transform)
-			.filter({ $0.token.isDay() || $0.token.isTime() })
+		// get strings and locations
+		let strings = HoursRecognizer.stringsForImage(observations: observations, transform: transform)
 
-		if tokenHistory.isEmpty {
-			tokenHistory = tokens
-		} else {
-			// degrade all confidences
-			tokenHistory = tokenHistory
-				.map({ ($0.token, $0.rect, $0.confidence * 0.7) })
-				.filter({ $0.confidence > 0.85 })
+		// split into lines of text
+		let stringLines = HoursRecognizer.getStringLines( strings )
 
-			for token in tokens {
-				// scan for existing occurance
-				if let index = tokenHistory.firstIndex(where: { token.rect.overlap($0.rect) > 0.6 }) {
-					let overlap = tokenHistory[index]
-					if overlap.token == token.token {
-						// same token text, so increase it's confidence
-						tokenHistory[index] = (token.token, token.rect, min(token.confidence + overlap.confidence,12.0))
-					} else {
-						tokenHistory.append(token)
-					}
-				} else {
-
-					tokenHistory.append(token)
-				}
-			}
+		// convert lines of strings to lines of tokens
+		let tokenLines = stringLines.compactMap { line -> [TokenRectConfidence]? in
+			let string = line.map({ $0.substring }).joined(separator: " ")
+			let tokens = HoursRecognizer.tokensForString( string )
+			let tokens2 = tokens.filter({ $0.token.isDay() || $0.token.isTime() })
+			let tokens3 = tokens2.map({ ($0.token, CGRect(), $0.confidence) })
+			return tokens3.count > 0 ? tokens3 : nil
 		}
-
-		#if false
-		let string = tokenHistory.map { "\($0.token)" }.joined(separator: " ")
-		print("\(string)")
-		#endif
-
-		let lines = HoursRecognizer.getTokenLines( tokenHistory )
-		tokenHistory.removeAll()
 
 		print("")
 		print("lines:")
-		for s in lines.map({ $0.map({return "\($0.token)"}).joined(separator: " ")}) {
+		for s in tokenLines.map({ $0.map({return "\($0.token)"}).joined(separator: " ")}) {
 			print("\(s)")
 		}
 
 		// split the lines into discrete days/times sequences
 		var tokenSets = [[TokenRectConfidence]]()
-		for line in lines {
+		for line in tokenLines {
 			tokenSets.append( [line.first!] )
 			for token in line[1...] {
 				if token.token.isDay() == tokenSets.last?.first?.token.isDay() ||
@@ -543,11 +449,6 @@ class HoursRecognizer: ObservableObject {
 			let best = $0.bestTwo( {$0.confidence > $1.confidence} )
 			if best.count == 1 {
 				// don't permit an uncoupled time
-				return nil
-			}
-			if ((best[1].rect.minX - best[0].rect.maxX) / (best[1].rect.maxX - best[0].rect.minX) > 0.8) {
-				// the distance between the times is too large
-				print("\((best[1].rect.minX - best[0].rect.maxX) / (best[1].rect.maxX - best[0].rect.minX))")
 				return nil
 			}
 			print("\(best[1].token)")
@@ -605,7 +506,6 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	func setImage(image: CGImage, isRotated: Bool) {
-		tokenHistory = []
 		self.text = ""
 
 //		let rotationTransform = CGAffineTransform(translationX: 0, y: 1).rotated(by: -CGFloat.pi / 2)
