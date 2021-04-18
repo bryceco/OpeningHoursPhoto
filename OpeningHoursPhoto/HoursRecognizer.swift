@@ -80,7 +80,7 @@ extension Array {
 }
 
 typealias SubstringRectf = (string:Substring,rect:(Range<String.Index>)->CGRect)
-typealias StringRect = (string:Substring,rect:CGRect)
+typealias StringRect = (string:Substring, rect:CGRect)
 
 // A version of Scanner that returns a rect for each string
 fileprivate class RectScanner {
@@ -109,8 +109,8 @@ fileprivate class RectScanner {
 	}
 
 	func result(_ sub:Substring) -> (Substring,CGRect) {
-		let d1 = sub.distance(from: sub.startIndex, to: sub.base.startIndex)
-		let d2 = sub.distance(from: sub.endIndex, to: sub.base.startIndex)
+		let d1 = sub.distance(from: sub.base.startIndex, to: sub.startIndex )
+		let d2 = sub.distance(from: sub.base.startIndex, to: sub.endIndex )
 		let p1 = substring.index(substring.startIndex, offsetBy: d1)
 		let p2 = substring.index(substring.startIndex, offsetBy: d2)
 		let rect = rectf(p1..<p2)
@@ -366,11 +366,11 @@ fileprivate enum Day: String {
 							Day.Su: ["sonntag",		"so", "son"]
 	]
 
-	static func scan(scanner:SubScanner) -> (day:Self, substring:Substring, confidence:Float)? {
+	static func scan(scanner:MultiScanner) -> (day:Self, rect:CGRect, confidence:Float)? {
 		let dict = english
 		for (day,strings) in dict {
 			if let s = scanner.scanAnyWord(strings) {
-				return (day,s,Float(s.count))
+				return (day,s.rect,Float(s.string.count))
 			}
 		}
 		return nil
@@ -384,62 +384,62 @@ fileprivate struct Time {
 		self.text = String(format: "%02d:%02d", hour, minute)
 	}
 
-	static func scan(scanner: SubScanner) -> (time:Self, substring:Substring, confidence:Float)? {
+	static func scan(scanner: MultiScanner) -> (time:Self, rect:CGRect, confidence:Float)? {
+		let index = scanner.currentIndex
 		guard let hour = scanner.scanInt() else { return nil }
-		if let iHour = Int(hour),
+		if let iHour = Int(hour.string),
 		   iHour >= 0 && iHour <= 24
 		{
 			if scanner.scanString(":") != nil || scanner.scanString(".") != nil,
 			   let minute = scanner.scanInt(),
-			   minute.count == 2,
-			   minute >= "00" && minute < "60"
+			   minute.string.count == 2,
+			   minute.string >= "00" && minute.string < "60"
 			{
 				_ = scanner.scanWhitespace()
 				if let am = scanner.scanString("AM") {
-					return (Time(hour: iHour%12, minute: Int(minute)!),
-							Substring.from(hour, to:am),
+					return (Time(hour: iHour%12, minute: Int(minute.string)!),
+							hour.rect.union(am.rect),
 							8.0)
 				}
 				if let pm = scanner.scanString("PM") {
-					return (Time(hour: (iHour%12)+12, minute: Int(minute)!),
-							Substring.from(hour, to:pm),
+					return (Time(hour: (iHour%12)+12, minute: Int(minute.string)!),
+							hour.rect.union(pm.rect),
 							8.0)
 				}
-				return (Time(hour: iHour, minute: Int(minute)!),
-						Substring.from(hour, to:minute),
+				return (Time(hour: iHour, minute: Int(minute.string)!),
+						hour.rect.union(minute.rect),
 						6.0)
 			}
 			_ = scanner.scanWhitespace()
 			if let am = scanner.scanString("AM") {
 				return (Time(hour: iHour%12, minute: 0),
-						Substring.from(hour, to:am),
+						hour.rect.union(am.rect),
 						4.0)
 			}
 			if let pm = scanner.scanString("PM") {
 				return (Time(hour: (iHour%12)+12, minute: 0),
-						Substring.from(hour, to:pm),
+						hour.rect.union(pm.rect),
 						4.0)
 			}
 			return (Time(hour: iHour, minute: 0),
-					hour,
+					hour.rect,
 					1.0)
 		}
-		scanner.currentIndex = hour.startIndex
+		scanner.currentIndex = index
 		return nil
 	}
 }
 
 fileprivate struct Dash {
-	static func scan(scanner: SubScanner) -> (Self,Substring,Float)? {
+	static func scan(scanner: MultiScanner) -> (Self,CGRect,Float)? {
 		if let s = scanner.scanString("-") ?? scanner.scanWord("to") {
-			return (Dash(), s, Float(s.count))
+			return (Dash(), s.rect, Float(s.string.count))
 		}
 		return nil
 	}
 }
 
-fileprivate typealias SubstringRectConfidence = (substring:Substring, rect:CGRect, confidence:Float)
-fileprivate typealias TokenSubstringConfidence = (token:Token, substring:Substring, confidence:Float)
+fileprivate typealias SubstringRectConfidence = (substring:Substring, rect:CGRect, rectf:(Range<String.Index>)->CGRect, confidence:Float)
 fileprivate typealias TokenRectConfidence = (token:Token, rect:CGRect, confidence:Float)
 
 fileprivate enum Token : Equatable {
@@ -469,15 +469,15 @@ fileprivate enum Token : Equatable {
 		}
 	}
 
-	static func scan(scanner: SubScanner) -> TokenSubstringConfidence? {
-		if let (day,substring,confidence) = Day.scan(scanner: scanner) {
-			return (.day(day),substring,confidence)
+	static func scan(scanner: MultiScanner) -> TokenRectConfidence? {
+		if let (day,rect,confidence) = Day.scan(scanner: scanner) {
+			return (.day(day),rect,confidence)
 		}
-		if let (time,substring,confidence) = Time.scan(scanner: scanner) {
-			return (.time(time),substring,confidence)
+		if let (time,rect,confidence) = Time.scan(scanner: scanner) {
+			return (.time(time),rect,confidence)
 		}
-		if let (dash,substring,confidence) = Dash.scan(scanner: scanner) {
-			return (.dash(dash),substring,confidence)
+		if let (dash,rect,confidence) = Dash.scan(scanner: scanner) {
+			return (.dash(dash),rect,confidence)
 		}
 		return nil
 	}
@@ -496,10 +496,10 @@ class HoursRecognizer: ObservableObject {
 	init() {
 	}
 
-	private class func tokensForString(_ string: String) -> [TokenSubstringConfidence] {
-		var list = [TokenSubstringConfidence]()
+	private class func tokensForString(_ strings: [SubstringRectConfidence]) -> [TokenRectConfidence] {
+		var list = [TokenRectConfidence]()
 
-		let scanner = SubScanner(string: string)
+		let scanner = MultiScanner(strings: strings.map { return ($0.substring, $0.rectf)} )
 		_ = scanner.scanWhitespace()
 		while !scanner.isAtEnd {
 			if let token = Token.scan(scanner: scanner) {
@@ -555,18 +555,29 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	private class func stringsForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [SubstringRectConfidence] {
-		var wordList = [(Substring,CGRect,Float)]()
+		var wordList = [SubstringRectConfidence]()
 		for observation in observations {
 			guard let candidate = observation.topCandidates(1).first else { continue }
 			// Each observation can contain text in disconnected parts of the screen,
 			// so we tokenize the string and extract the screen location of each token
+			let rectf:(Range<String.Index>)->CGRect = {
+				let rect = try! candidate.boundingBox(for: $0)!.boundingBox
+				let rect2 = rect.applying(transform)
+				return rect2
+			}
 			let words = candidate.string.split(separator: " ")
-			let words2 = words.map({ word -> (Substring,CGRect,Float) in
+			let words2 = words.map({ word -> SubstringRectConfidence in
+				#if true
 				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
 				let range = word.startIndex ..< word.endIndex
 				let rect = try! candidate.boundingBox(for: range)!.boundingBox
 				let rect2 = rect.applying(transform)
-				return (word, rect2, candidate.confidence)
+				return (word, rect2, rectf, candidate.confidence)
+				#else
+				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
+				let rect = rectf( word.startIndex ..< word.endIndex )
+				return (word, rect, rectf, candidate.confidence)
+				#endif
 			})
 			wordList += words2
 		}
@@ -585,20 +596,33 @@ class HoursRecognizer: ObservableObject {
 		// get strings and locations
 		let strings = HoursRecognizer.stringsForImage(observations: observations, transform: transform)
 
+		print("")
+		print("strings:")
+		for s in strings {
+			print("\(s.substring): \(s.rect)")
+		}
+
 		// split into lines of text
 		let stringLines = HoursRecognizer.getStringLines( strings )
 
+		print("")
+		print("string lines:")
+		for line in stringLines {
+			let s1 = line.map({$0.substring}).joined(separator: " ")
+			let s2 = line.map({"\($0.rect)"}).joined(separator: " ")
+			print("\(s1): \(s2)")
+		}
+
 		// convert lines of strings to lines of tokens
 		let tokenLines = stringLines.compactMap { line -> [TokenRectConfidence]? in
-			let string = line.map({ $0.substring }).joined(separator: " ")
-			let tokens = HoursRecognizer.tokensForString( string )
+			let tokens = HoursRecognizer.tokensForString( line )
 			let tokens2 = tokens.filter({ $0.token.isDay() || $0.token.isTime() })
 			let tokens3 = tokens2.map({ ($0.token, CGRect(), $0.confidence) })
 			return tokens3.count > 0 ? tokens3 : nil
 		}
 
 		print("")
-		print("lines:")
+		print("token lines:")
 		for s in tokenLines.map({ $0.map({return "\($0.token)"}).joined(separator: " ")}) {
 			print("\(s)")
 		}
@@ -631,10 +655,6 @@ class HoursRecognizer: ObservableObject {
 				// don't permit an uncoupled time
 				return nil
 			}
-			print("\(best[1].token)")
-			if "\(best[1].token)" == "10:00" {
-				print("bad")
-			}
 			return best
 		})
 
@@ -647,12 +667,6 @@ class HoursRecognizer: ObservableObject {
 		}
 		#endif
 
-		print("")
-		print("sequences:")
-		for s in tokenSets.map({ $0.map({return "\($0.token)"}).joined(separator: " ")}) {
-			print("\(s)")
-		}
-
 		let invertedTransform = transform.inverted()
 		let tokenBoxes = tokenSets.joined().map({$0.rect.applying(invertedTransform)})
 		camera?.addBoxes(boxes: tokenBoxes, color: UIColor.green)
@@ -660,10 +674,6 @@ class HoursRecognizer: ObservableObject {
 		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
 
 		print("\(text)")
-
-		if text.contains("10:00-10:00") {
-			print("bad")
-		}
 
 		let count = resultHistory[text] ?? 0
 		resultHistory[text] = count+1
