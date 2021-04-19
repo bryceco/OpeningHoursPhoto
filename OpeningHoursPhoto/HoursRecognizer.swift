@@ -79,7 +79,7 @@ extension Array {
 	}
 }
 
-fileprivate typealias SubstringRectf = (string:Substring,rect:(Range<String.Index>)->CGRect)
+fileprivate typealias SubstringRectf = (string:Substring,rectf:(Range<String.Index>)->CGRect)
 fileprivate typealias StringRect = (string:Substring, rect:CGRect)
 
 // A version of Scanner that returns a rect for each string
@@ -91,12 +91,12 @@ fileprivate class RectScanner {
 
 	static private let allLetters = CharacterSet.uppercaseLetters.union(CharacterSet.lowercaseLetters)
 
-	init(substring: Substring, rect:@escaping (Range<String.Index>)->CGRect) {
+	init(substring: Substring, rectf:@escaping (Range<String.Index>)->CGRect) {
 		self.substring = substring
 		self.scanner = Scanner(string: String(substring))
 		self.scanner.caseSensitive = false
 		self.scanner.charactersToBeSkipped = nil
-		self.rectf = rect
+		self.rectf = rectf
 	}
 
 	var currentIndex: String.Index {
@@ -187,7 +187,7 @@ fileprivate class MultiScanner {
 
 	init(strings: [SubstringRectf]) {
 		self.strings = strings
-		self.scanners = strings.map { RectScanner(substring: $0.string, rect:$0.rect) }
+		self.scanners = strings.map { RectScanner(substring: $0.string, rectf:$0.rectf) }
 		self.scannerIndex = 0
 	}
 
@@ -206,56 +206,46 @@ fileprivate class MultiScanner {
 		}
 	}
 
-	var isAtEnd: Bool {
-		get {
-			return scanner.isAtEnd
-		}
-	}
+	var isAtEnd: Bool { return scanner.isAtEnd }
 
 	func scanString(_ string: String) -> StringRect? {
-		if let sub = scanner.scanString(string) {
-			return sub
-		}
-		return nil
+		return scanner.scanString(string)
 	}
 
 	func scanWhitespace() -> StringRect? {
-		if let sub = scanner.scanWhitespace() {
-			return sub
+		let sub = scanner.scanWhitespace()
+		// repeat in case we need to switch to next scanner
+		if sub != nil {
+			while let _ = scanner.scanWhitespace() {
+			}
 		}
-		return nil
+		return sub
 	}
 
 	func scanUpToWhitespace() -> StringRect? {
-		if let sub = scanner.scanUpToWhitespace() {
-			return sub
+		let sub = scanner.scanUpToWhitespace()
+		// repeat in case we need to switch to next scanner
+		if sub != nil {
+			while let _ = scanner.scanUpToWhitespace() {
+			}
 		}
-		return nil
+		return sub
 	}
 
 	func scanInt() -> StringRect? {
-		if let sub = scanner.scanInt() {
-			return sub
-		}
-		return nil
+		return scanner.scanInt()
 	}
 
 	func scanWord(_ word: String) -> StringRect? {
-		if let sub = scanner.scanWord( word ) {
-			return sub
-		}
-		return nil
+		return scanner.scanWord( word )
 	}
 
 	func scanAnyWord(_ words: [String]) -> StringRect? {
-		if let sub = scanner.scanAnyWord(words) {
-			return sub
-		}
-		return nil
+		return scanner.scanAnyWord(words)
 	}
 
 	func remainder() -> String {
-		return scanner.remainder() + scanners[scannerIndex...].map({$0.remainder()}).joined(separator: " ")
+		return scanners[scannerIndex...].map({$0.remainder()}).joined(separator: " ")
 	}
 }
 
@@ -356,7 +346,13 @@ fileprivate struct Time {
 
 fileprivate struct Dash {
 	static func scan(scanner: MultiScanner, language: HoursRecognizer.Language) -> (Self,CGRect,Float)? {
-		if let s = scanner.scanString("-") ?? scanner.scanWord("to") {
+		let through = { () -> String in
+			switch language {
+			case .en: return "to"
+			case .de: return "bis"
+			}}()
+
+		if let s = scanner.scanString("-") ?? scanner.scanWord(through) {
 			return (Dash(), s.rect, Float(s.string.count))
 		}
 		return nil
