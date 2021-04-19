@@ -11,7 +11,7 @@
 		0285E352262118E600C97110 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0285E351262118E600C97110 /* ContentView.swift */; };
 		0285E354262118F000C97110 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0285E353262118F000C97110 /* Assets.xcassets */; };
 		0285E357262118F000C97110 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0285E356262118F000C97110 /* Preview Assets.xcassets */; };
-		0285E3612621195C00C97110 /* CameraViewWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0285E35E2621195C00C97110 /* CameraViewWrapper.swift */; };
+		0285E3612621195C00C97110 /* OpeningHoursPhoto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0285E35E2621195C00C97110 /* OpeningHoursPhoto.swift */; };
 		0285E3622621195C00C97110 /* HoursRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0285E35F2621195C00C97110 /* HoursRecognizer.swift */; };
 		0285E3632621195C00C97110 /* CameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0285E3602621195C00C97110 /* CameraView.swift */; };
 /* End PBXBuildFile section */
@@ -23,7 +23,7 @@
 		0285E353262118F000C97110 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0285E356262118F000C97110 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		0285E358262118F000C97110 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		0285E35E2621195C00C97110 /* CameraViewWrapper.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CameraViewWrapper.swift; sourceTree = "<group>"; };
+		0285E35E2621195C00C97110 /* OpeningHoursPhoto.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OpeningHoursPhoto.swift; sourceTree = "<group>"; };
 		0285E35F2621195C00C97110 /* HoursRecognizer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HoursRecognizer.swift; sourceTree = "<group>"; };
 		0285E3602621195C00C97110 /* CameraView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CameraView.swift; sourceTree = "<group>"; };
 		0285E3642623A4EA00C97110 /* OpeningHoursPhoto.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OpeningHoursPhoto.entitlements; sourceTree = "<group>"; };
@@ -61,7 +61,7 @@
 			children = (
 				0285E353262118F000C97110 /* Assets.xcassets */,
 				0285E3602621195C00C97110 /* CameraView.swift */,
-				0285E35E2621195C00C97110 /* CameraViewWrapper.swift */,
+				0285E35E2621195C00C97110 /* OpeningHoursPhoto.swift */,
 				0285E351262118E600C97110 /* ContentView.swift */,
 				0285E35F2621195C00C97110 /* HoursRecognizer.swift */,
 				0285E358262118F000C97110 /* Info.plist */,
@@ -153,7 +153,7 @@
 				0285E3622621195C00C97110 /* HoursRecognizer.swift in Sources */,
 				0285E350262118E600C97110 /* OpeningHoursPhotoApp.swift in Sources */,
 				0285E3632621195C00C97110 /* CameraView.swift in Sources */,
-				0285E3612621195C00C97110 /* CameraViewWrapper.swift in Sources */,
+				0285E3612621195C00C97110 /* OpeningHoursPhoto.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
