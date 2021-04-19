@@ -58,16 +58,16 @@ extension Substring {
 
 // return a list where all items are removed except the two with highest confidence (preserving their order)
 extension Array {
-	func bestTwo(_ isBetter: (_ lhs: Self.Element, _ rhs: Self.Element) -> Bool) -> [Self.Element] {
+	func bestTwo(_ lessThan: (_ lhs: Self.Element, _ rhs: Self.Element) -> Bool) -> [Self.Element] {
 		if self.count <= 2 {
 			return self
 		}
 		var b0 = 0
 		var b1 = 1
 		for i in 2..<self.count {
-			if isBetter( self[i], self[b0] ) {
+			if lessThan( self[b0], self[i] ) {
 				b0 = i
-			} else if isBetter( self[i], self[b1]) {
+			} else if lessThan( self[b1], self[i]) {
 				b1 = i
 			}
 		}
@@ -96,8 +96,6 @@ fileprivate class RectScanner {
 		self.scanner.charactersToBeSkipped = nil
 		self.rectf = rect
 	}
-
-	static let allLetters = CharacterSet.uppercaseLetters.union(CharacterSet.lowercaseLetters)
 
 	var currentIndex: String.Index {
 		get { scanner.currentIndex }
@@ -366,8 +364,13 @@ fileprivate enum Day: String {
 							Day.Su: ["sonntag",		"so", "son"]
 	]
 
-	static func scan(scanner:MultiScanner) -> (day:Self, rect:CGRect, confidence:Float)? {
-		let dict = english
+	static func scan(scanner:MultiScanner, language:HoursRecognizer.Language) -> (day:Self, rect:CGRect, confidence:Float)? {
+		let dict = { () -> [Day:[String]] in
+			switch language {
+			case .en: return english
+			case .de: return german
+			}
+		}()
 		for (day,strings) in dict {
 			if let s = scanner.scanAnyWord(strings) {
 				return (day,s.rect,Float(s.string.count))
@@ -431,7 +434,7 @@ fileprivate struct Time {
 }
 
 fileprivate struct Dash {
-	static func scan(scanner: MultiScanner) -> (Self,CGRect,Float)? {
+	static func scan(scanner: MultiScanner, language: HoursRecognizer.Language) -> (Self,CGRect,Float)? {
 		if let s = scanner.scanString("-") ?? scanner.scanWord("to") {
 			return (Dash(), s.rect, Float(s.string.count))
 		}
@@ -469,14 +472,14 @@ fileprivate enum Token : Equatable {
 		}
 	}
 
-	static func scan(scanner: MultiScanner) -> TokenRectConfidence? {
-		if let (day,rect,confidence) = Day.scan(scanner: scanner) {
+	static func scan(scanner: MultiScanner, language: HoursRecognizer.Language) -> TokenRectConfidence? {
+		if let (day,rect,confidence) = Day.scan(scanner: scanner, language: language) {
 			return (.day(day),rect,confidence)
 		}
 		if let (time,rect,confidence) = Time.scan(scanner: scanner) {
 			return (.time(time),rect,confidence)
 		}
-		if let (dash,rect,confidence) = Dash.scan(scanner: scanner) {
+		if let (dash,rect,confidence) = Dash.scan(scanner: scanner, language: language) {
 			return (.dash(dash),rect,confidence)
 		}
 		return nil
@@ -511,13 +514,13 @@ public class HoursRecognizer: ObservableObject {
 
 	}
 
-	private class func tokensForString(_ strings: [SubstringRectConfidence]) -> [TokenRectConfidence] {
+	private class func tokensForString(_ strings: [SubstringRectConfidence], language: Language) -> [TokenRectConfidence] {
 		var list = [TokenRectConfidence]()
 
 		let scanner = MultiScanner(strings: strings.map { return ($0.substring, $0.rectf)} )
 		_ = scanner.scanWhitespace()
 		while !scanner.isAtEnd {
-			if let token = Token.scan(scanner: scanner) {
+			if let token = Token.scan(scanner: scanner, language: language) {
 				list.append( token )
 			} else {
 				// skip to next token
@@ -528,6 +531,7 @@ public class HoursRecognizer: ObservableObject {
 		return list
 	}
 
+	// takes an array of image observations and returns blocks of text along with their locations
 	private class func stringsForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [SubstringRectConfidence] {
 		var wordList = [SubstringRectConfidence]()
 		for observation in observations {
@@ -550,11 +554,13 @@ public class HoursRecognizer: ObservableObject {
 		return wordList
 	}
 
-	// split the list of sorted tokens into lines of text
+	// splits observed text text blocks into lines of text, sorted left-to-right and top-to-bottom
 	private class func getStringLines( _ allStrings: [SubstringRectConfidence] ) -> [[SubstringRectConfidence]] {
 		var lines = [[SubstringRectConfidence]]()
 
-		// sort with highest confidence first
+		// sort strings left-to-right
+//		let allStrings = allStrings.sorted(by: {$0.rect.minX < $1.rect.minX})
+
 		var stack = [ ArraySlice(allStrings) ]
 
 		while let list = stack.popLast() {
@@ -566,12 +572,14 @@ public class HoursRecognizer: ObservableObject {
 			// get highest confidence string
 			let bestIndex = list.indices.max(by: {list[$0].confidence < list[$1].confidence})!
 
-			// find all other tokens on the same line
+			// find adjacent tokens on the same line to the left
 			let lower = (list.startIndex..<bestIndex).reversed().first(where: {
 				let prevRect = list[$0+1].rect
 				let thisRect = list[$0].rect
 				return !(thisRect.maxX <= prevRect.minX && (prevRect.minY...prevRect.maxY).contains( thisRect.midY ))
 			})?.advanced(by: 1) ?? list.startIndex
+
+			// find adjacent tokens on the same line to the right
 			let upper = (bestIndex+1..<list.endIndex).first(where: {
 				let prevRect = list[$0-1].rect
 				let thisRect = list[$0].rect
@@ -581,6 +589,7 @@ public class HoursRecognizer: ObservableObject {
 			// save the line of strings
 			lines.append( Array( list[lower..<upper] ) )
 
+			// recurse on
 			stack.append( list[..<lower] )
 			stack.append( list[upper...] )
 		}
@@ -590,6 +599,62 @@ public class HoursRecognizer: ObservableObject {
 
 		return lines
 	}
+
+	private class func tokenLinesForStringLines( _ stringLines: [[SubstringRectConfidence]], language: Language) -> [[TokenRectConfidence]] {
+		// convert lines of strings to lines of tokens
+		let tokenLines = stringLines.compactMap { line -> [TokenRectConfidence]? in
+			let tokens = HoursRecognizer.tokensForString( line, language: language )
+			let tokens2 = tokens.filter({ $0.token.isDay() || $0.token.isTime() })
+			let tokens3 = tokens2.map({ ($0.token, $0.rect, $0.confidence) })
+			return tokens3.count > 0 ? tokens3 : nil
+		}
+		return tokenLines
+	}
+
+	// split the lines so each sequence of days or times is in its own group
+	private class func TokenSequencesForTokenLines( _ tokenLines: [[TokenRectConfidence]]) -> [[TokenRectConfidence]] {
+		var tokenSets = [[TokenRectConfidence]]()
+		for line in tokenLines {
+			tokenSets.append( [line.first!] )
+			for token in line[1...] {
+				if token.token.isDay() == tokenSets.last?.first?.token.isDay() ||
+				   token.token.isTime() == tokenSets.last?.first?.token.isTime()
+				{
+					tokenSets[tokenSets.count-1].append(token)
+				} else {
+					tokenSets.append([token])
+				}
+			}
+			tokenSets.append([])
+		}
+		tokenSets = tokenSets.filter { $0.count > 0 }
+
+		return tokenSets
+	}
+
+
+	// if a sequence has multiple days then take only the best 2
+	private class func GoodDaysForTokenSequences( _ tokenSets: [[TokenRectConfidence]]) -> [[TokenRectConfidence]] {
+		return tokenSets.map( { return $0.first!.token.isDay() ? $0.bestTwo( {$0.confidence < $1.confidence} ) : $0 })
+	}
+
+	// if a sequence has multiple times then take only the best even number
+	private class func GoodTimesForTokenSequences( _ tokenSets: [[TokenRectConfidence]]) -> [[TokenRectConfidence]] {
+		return tokenSets.compactMap( { set in
+		   if !set.first!.token.isTime() { return set }	// anything not a time sequence return as-is
+		   var list = set
+		   // all times should be roughly equal confidence, so discard any that are oddly poor
+		   let conf = list.bestTwo( {$0.confidence < $1.confidence}).min(by: {$0.confidence < $1.confidence})!.confidence
+		   list.removeAll(where: {$0.confidence < conf * 0.5})
+		   // make sure it's an even number
+		   if list.count % 2 != 0 {
+			   let worstIndex = set.indices.min(by: {list[$0].confidence < list[$1].confidence})!
+			   list.remove(at: worstIndex)
+		   }
+		   return list.count > 0 ? list : nil
+	   })
+	}
+
 
 	private class func hoursStringForTokens(_ tokenLines: [[TokenRectConfidence]]) -> String {
 		var days = [TokenRectConfidence]()
@@ -615,10 +680,11 @@ public class HoursRecognizer: ObservableObject {
 							}
 							result += " "
 						}
-						times = times.bestTwo { $0.confidence > $1.confidence }
 
-						result += "\(times[0].token)-\(times[1].token)"
-						result += ", "
+						for index in stride(from: 0, to: times.count, by: 2) {
+							result += "\(times[index].token)-\(times[index+1].token),"
+						}
+						result += " "
 					}
 					if times.count > 0 {
 						times = []
@@ -677,57 +743,27 @@ public class HoursRecognizer: ObservableObject {
 		}
 		#endif
 
-		// convert lines of strings to lines of tokens
-		let tokenLines = stringLines.compactMap { line -> [TokenRectConfidence]? in
-			let tokens = HoursRecognizer.tokensForString( line )
-			let tokens2 = tokens.filter({ $0.token.isDay() || $0.token.isTime() })
-			let tokens3 = tokens2.map({ ($0.token, $0.rect, $0.confidence) })
-			return tokens3.count > 0 ? tokens3 : nil
-		}
+		// convert strings to tokens
+		let tokenLines = HoursRecognizer.tokenLinesForStringLines( stringLines, language: self.language )
 
 		#if false
 		print("")
 		print("token lines:")
 		for s in tokenLines {
-			let s1 = s.map({ return "\($0.token)"}).joined(separator: " ")
+			let s1 = s.map({ "\($0.token)"}).joined(separator: " ")
 			let s2 = s.map({ "\($0.rect)"}).joined(separator: " ")
 			print("\(s1): \(s2)")
 		}
 		#endif
 
-		// split the lines into discrete days/times sequences
-		var tokenSets = [[TokenRectConfidence]]()
-		for line in tokenLines {
-			tokenSets.append( [line.first!] )
-			for token in line[1...] {
-				if token.token.isDay() == tokenSets.last?.first?.token.isDay() ||
-				   token.token.isTime() == tokenSets.last?.first?.token.isTime()
-				{
-					tokenSets[tokenSets.count-1].append(token)
-				} else {
-					tokenSets.append([token])
-				}
-			}
-			tokenSets.append([])
-		}
-		tokenSets = tokenSets.filter { $0.count > 0 }
+		// get homogeneous day/time sets
+		var tokenSets = HoursRecognizer.TokenSequencesForTokenLines( tokenLines )
 
-		// if a sequence has multiple days then take only the best 2
-		tokenSets = tokenSets.map( { return $0.first!.token.isDay() ? $0.bestTwo( {$0.confidence > $1.confidence} ) : $0 })
+		// if a sequence has multiple days then take only the best days
+		tokenSets = HoursRecognizer.GoodDaysForTokenSequences( tokenSets )
 
-		// if a sequence has multiple times then take only the best 2
-		tokenSets = tokenSets.compactMap( {
-			if !$0.first!.token.isTime() || $0.count < 2 { return $0 }	// anything not a time sequence return as-is
-			let best = $0.bestTwo( {$0.confidence > $1.confidence} )
-			if best.count == 1 {
-				// don't permit an uncoupled time
-				return nil
-			}
-			if "\(best[0].token)" == "00:00" && "\(best[1])" == "00:00" {
-				return nil
-			}
-			return best
-		})
+		// if a sequence has multiple times then take only the best times
+		tokenSets = HoursRecognizer.GoodTimesForTokenSequences( tokenSets )
 
 		#if false
 		print("")
@@ -738,11 +774,13 @@ public class HoursRecognizer: ObservableObject {
 		}
 		#endif
 
+		// convert the final sets of tokens to a single stream
+		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
+
+		// show the selected tokens in the video feed
 		let invertedTransform = transform.inverted()
 		let tokenBoxes = tokenSets.joined().map({$0.rect.applying(invertedTransform)})
 		camera?.addBoxes(boxes: tokenBoxes, color: UIColor.green)
-
-		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
 
 		#if false
 		print("\(text)")
