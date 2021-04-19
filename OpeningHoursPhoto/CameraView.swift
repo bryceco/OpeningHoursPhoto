@@ -155,10 +155,20 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 		guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
 		let request = VNRecognizeTextRequest(completionHandler: {request, error in
+			// we need to check this before we tear down the boxes
+			if !(self.shouldRecordCallback?() ?? true) {
+				// stop recording
+				DispatchQueue.main.sync {
+					self.stopRunning()
+				}
+				return
+			}
+
 			guard let results = request.results as? [VNRecognizedTextObservation] else { return }
 			self.addBoxes(forObservations: results)
 			self.observationsCallback?(results,self)
 			self.displayBoxes()
+
 			if !(self.shouldRecordCallback?() ?? true) {
 				// stop recording
 				DispatchQueue.main.sync {

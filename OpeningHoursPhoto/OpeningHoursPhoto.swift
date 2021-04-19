@@ -8,10 +8,10 @@ import SwiftUI
 
 
 fileprivate extension Button {
-	func withMyButtonStyle() -> some View {
+	func withMyButtonStyle(enabled:Bool) -> some View {
 		self.padding()
-			.foregroundColor(.white)
-			.background(Capsule().fill(Color.blue))
+			.background(Capsule().fill(enabled ? Color.blue : Color.gray))
+			.accentColor(.white)
 	}
 }
 
@@ -41,17 +41,17 @@ public struct OpeningHoursPhotoView: View {
 					Spacer()
 					Button("Cancel") {
 						show = false
-					}.withMyButtonStyle()
+					}.withMyButtonStyle(enabled: true)
 					Spacer()
 					Button("Retry") {
 						restart = true
-					}.withMyButtonStyle()
+					}.withMyButtonStyle(enabled: true)
 					Spacer()
 					Button("Accept") {
 						show = false
 						returnedText = recognizer.text
-					}.withMyButtonStyle()
-					.disabled( !recognizer.isFinished() )
+					}.withMyButtonStyle( enabled: recognizer.finished )
+					.disabled( !recognizer.finished )
 					Spacer()
 				}
 			}
@@ -81,7 +81,7 @@ struct OpeningHoursPhoto: UIViewRepresentable {
 			recognizer.updateWithLiveObservations( observations: observations, camera: camera )
 		}
 		cam.shouldRecordCallback = {
-			return !recognizer.isFinished()
+			return !recognizer.finished
 		}
 		return cam
 	}
@@ -94,7 +94,7 @@ struct OpeningHoursPhoto: UIViewRepresentable {
 				uiView.startRunning()
 			}
 		}
-		if recognizer.isFinished() {
+		if recognizer.finished {
 			// TODO: enable Accept button
 		}
 	}

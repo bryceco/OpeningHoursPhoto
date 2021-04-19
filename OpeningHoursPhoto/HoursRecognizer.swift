@@ -80,7 +80,7 @@ extension Array {
 }
 
 fileprivate typealias SubstringRectf = (string:Substring,rectf:(Range<String.Index>)->CGRect)
-fileprivate typealias StringRect = (string:Substring, rect:CGRect)
+fileprivate typealias StringRect = (string:String, rect:CGRect)
 
 // A version of Scanner that returns a rect for each string
 fileprivate class RectScanner {
@@ -108,13 +108,13 @@ fileprivate class RectScanner {
 		get { scanner.isAtEnd }
 	}
 
-	func result(_ sub:Substring) -> (Substring,CGRect) {
+	func result(_ sub:Substring) -> (String,CGRect) {
 		let d1 = sub.distance(from: sub.base.startIndex, to: sub.startIndex )
 		let d2 = sub.distance(from: sub.base.startIndex, to: sub.endIndex )
 		let p1 = substring.index(substring.startIndex, offsetBy: d1)
 		let p2 = substring.index(substring.startIndex, offsetBy: d2)
 		let rect = rectf(p1..<p2)
-		return (sub,rect)
+		return (String(sub),rect)
 	}
 
 	func scanString(_ string: String) -> StringRect? {
@@ -213,20 +213,22 @@ fileprivate class MultiScanner {
 	}
 
 	func scanWhitespace() -> StringRect? {
-		let sub = scanner.scanWhitespace()
+		var sub = scanner.scanWhitespace()
 		// repeat in case we need to switch to next scanner
 		if sub != nil {
-			while let _ = scanner.scanWhitespace() {
+			while let s = scanner.scanWhitespace() {
+				sub = (sub!.string + s.string, sub!.rect.union(s.rect))
 			}
 		}
 		return sub
 	}
 
 	func scanUpToWhitespace() -> StringRect? {
-		let sub = scanner.scanUpToWhitespace()
+		var sub = scanner.scanUpToWhitespace()
 		// repeat in case we need to switch to next scanner
 		if sub != nil {
-			while let _ = scanner.scanUpToWhitespace() {
+			while let s = scanner.scanUpToWhitespace() {
+				sub = (sub!.string + s.string, sub!.rect.union(s.rect))
 			}
 		}
 		return sub
@@ -304,7 +306,7 @@ fileprivate struct Time {
 		if let iHour = Int(hour.string),
 		   iHour >= 0 && iHour <= 24
 		{
-			if scanner.scanString(":") != nil || scanner.scanString(".") != nil,
+			if scanner.scanString(":") != nil || scanner.scanString(".") != nil || scanner.scanString(" ") != nil,
 			   let minute = scanner.scanInt(),
 			   minute.string.count == 2,
 			   minute.string >= "00" && minute.string < "60"
@@ -406,7 +408,11 @@ fileprivate enum Token : Equatable {
 public class HoursRecognizer: ObservableObject {
 
 	private var resultHistory = [String:Int]()
-	private var finished = false
+	@Published private(set) var finished = false {
+		willSet {
+			objectWillChange.send()
+		}
+	}
 
 	@Published public var language: Language = .en
 	@Published var text = "" {
@@ -428,7 +434,6 @@ public class HoursRecognizer: ObservableObject {
 		self.text = ""
 		self.resultHistory.removeAll()
 		self.finished = false
-
 	}
 
 	private class func tokensForString(_ strings: [SubstringRectConfidence], language: Language) -> [TokenRectConfidence] {
@@ -692,7 +697,7 @@ public class HoursRecognizer: ObservableObject {
 		#endif
 
 		// convert the final sets of tokens to a single stream
-		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
+		let resultString = HoursRecognizer.hoursStringForTokens( tokenSets )
 
 		// show the selected tokens in the video feed
 		let invertedTransform = transform.inverted()
@@ -703,21 +708,20 @@ public class HoursRecognizer: ObservableObject {
 		print("\(text)")
 		#endif
 
-		if text.count > 0 {
-			let count = (resultHistory[text] ?? 0) + 1
-			resultHistory[text] = count
-			if count >= 5 {
-				finished = true
-			}
-		}
-		
-		let best = resultHistory.max { $0.value < $1.value }?.key ?? ""
+		if resultString != "" {
+			let count = (resultHistory[resultString] ?? 0) + 1
+			resultHistory[resultString] = count
 
-		if Thread.isMainThread {
-			self.text = best
-		} else {
-			DispatchQueue.main.async {
-				self.text = best
+			let best = resultHistory.max { $0.value < $1.value }!
+
+			if Thread.isMainThread {
+				self.text = best.key
+				self.finished = best.value >= 5
+			} else {
+				DispatchQueue.main.async {
+					self.text = best.key
+					self.finished = best.value >= 5
+				}
 			}
 		}
 	}
@@ -746,10 +750,6 @@ public class HoursRecognizer: ObservableObject {
 //		request.usesLanguageCorrection = true
 		let requestHandler = VNImageRequestHandler(cgImage: image, options: [:])
 		try? requestHandler.perform([request])
-	}
-
-	public func isFinished() -> Bool {
-		return finished
 	}
 }
 
