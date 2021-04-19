@@ -1,5 +1,5 @@
 //
-//  HoursImage.swift
+//  HoursRecognizer.swift
 //
 //  Created by Bryce Cogswell on 4/5/21.
 //
@@ -58,7 +58,7 @@ extension Substring {
 
 // return a list where all items are removed except the two with highest confidence (preserving their order)
 extension Array {
-	func bestTwo(_ lessThan: (_ lhs: Self.Element, _ rhs: Self.Element) -> Bool) -> [Self.Element] {
+	fileprivate func bestTwo(_ lessThan: (_ lhs: Self.Element, _ rhs: Self.Element) -> Bool) -> [Self.Element] {
 		if self.count <= 2 {
 			return self
 		}
@@ -79,8 +79,8 @@ extension Array {
 	}
 }
 
-typealias SubstringRectf = (string:Substring,rect:(Range<String.Index>)->CGRect)
-typealias StringRect = (string:Substring, rect:CGRect)
+fileprivate typealias SubstringRectf = (string:Substring,rect:(Range<String.Index>)->CGRect)
+fileprivate typealias StringRect = (string:Substring, rect:CGRect)
 
 // A version of Scanner that returns a rect for each string
 fileprivate class RectScanner {
@@ -88,6 +88,8 @@ fileprivate class RectScanner {
 	let substring: Substring
 	let scanner: Scanner
 	let rectf:(Range<String.Index>)->CGRect
+
+	static private let allLetters = CharacterSet.uppercaseLetters.union(CharacterSet.lowercaseLetters)
 
 	init(substring: Substring, rect:@escaping (Range<String.Index>)->CGRect) {
 		self.substring = substring
@@ -151,7 +153,7 @@ fileprivate class RectScanner {
 		if let sub = scanString(word) {
 			if sub.string.endIndex < scanner.string.endIndex {
 				let c = scanner.string[sub.string.endIndex]
-				if SubScanner.allLetters.contains(character: c) {
+				if RectScanner.allLetters.contains(character: c) {
 					// it's part of a larger word
 					scanner.currentIndex = sub.string.startIndex
 					return nil
@@ -171,87 +173,6 @@ fileprivate class RectScanner {
 		return nil
 	}
 
-	func remainder() -> String {
-		return String(scanner.string[scanner.currentIndex...])
-	}
-}
-
-// A version of Scanner that returns Substring instead of String
-fileprivate class SubScanner {
-
-	let scanner: Scanner
-
-	init(string: String) {
-		self.scanner = Scanner(string: string)
-		self.scanner.caseSensitive = false
-		self.scanner.charactersToBeSkipped = nil
-	}
-
-	static let allLetters = CharacterSet.uppercaseLetters.union(CharacterSet.lowercaseLetters)
-
-	var currentIndex: String.Index {
-		get { scanner.currentIndex }
-		set { scanner.currentIndex = newValue }
-	}
-
-	var isAtEnd: Bool {
-		get { scanner.isAtEnd }
-	}
-
-	func scanString(_ string: String) -> Substring? {
-		let index = scanner.currentIndex
-		if let _ = scanner.scanString(string) {
-			return scanner.string[index..<scanner.currentIndex]
-		}
-		return nil
-	}
-
-	func scanWhitespace() -> Substring? {
-		let index = scanner.currentIndex
-		if let _ = scanner.scanCharacters(from: CharacterSet.whitespacesAndNewlines) {
-			return scanner.string[index..<scanner.currentIndex]
-		}
-		return nil
-	}
-
-	func scanUpToWhitespace() -> Substring? {
-		let index = scanner.currentIndex
-		if let _ = scanner.scanUpToCharacters(from: CharacterSet.whitespacesAndNewlines) {
-			return scanner.string[index..<scanner.currentIndex]
-		}
-		return nil
-	}
-
-	func scanInt() -> Substring? {
-		let index = scanner.currentIndex
-		if let _ = scanner.scanInt() {
-			return scanner.string[index..<scanner.currentIndex]
-		}
-		return nil
-	}
-
-	func scanWord(_ word: String) -> Substring? {
-		if let sub = scanString(word) {
-			if sub.endIndex < scanner.string.endIndex {
-				let c = scanner.string[sub.endIndex]
-				if SubScanner.allLetters.contains(character: c) {
-					// it's part of a larger word
-					scanner.currentIndex = sub.startIndex
-					return nil
-				}
-			}
-			return sub
-		}
-		return nil
-	}
-	func scanAnyWord(_ words: [String]) -> Substring? {
-		for word in words {
-			if let sub = scanWord(word) {
-				return sub
-			}
-		}
-		return nil
-	}
 	func remainder() -> String {
 		return String(scanner.string[scanner.currentIndex...])
 	}
