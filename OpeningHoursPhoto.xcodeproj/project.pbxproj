@@ -59,14 +59,14 @@
 		0285E34E262118E600C97110 /* OpeningHoursPhoto */ = {
 			isa = PBXGroup;
 			children = (
-				0285E3642623A4EA00C97110 /* OpeningHoursPhoto.entitlements */,
-				0285E34F262118E600C97110 /* OpeningHoursPhotoApp.swift */,
-				0285E351262118E600C97110 /* ContentView.swift */,
 				0285E353262118F000C97110 /* Assets.xcassets */,
 				0285E3602621195C00C97110 /* CameraView.swift */,
 				0285E35E2621195C00C97110 /* CameraViewWrapper.swift */,
+				0285E351262118E600C97110 /* ContentView.swift */,
 				0285E35F2621195C00C97110 /* HoursRecognizer.swift */,
 				0285E358262118F000C97110 /* Info.plist */,
+				0285E3642623A4EA00C97110 /* OpeningHoursPhoto.entitlements */,
+				0285E34F262118E600C97110 /* OpeningHoursPhotoApp.swift */,
 				0285E355262118F000C97110 /* Preview Content */,
 			);
 			path = OpeningHoursPhoto;

@@ -17,6 +17,7 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 
 	var photoCallback: ((CGImage)->(Void))? = nil
 	var observationsCallback: (([VNRecognizedTextObservation], CameraView)->(Void))? = nil
+	var shouldRecordCallback: (()->(Bool))? = nil
 
 	override func layoutSubviews() {
 		super.layoutSubviews()
@@ -63,6 +64,13 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 		self.layer.addSublayer(previewLayer)
 
 		captureSession.startRunning()
+	}
+
+	public func startRunning() {
+		captureSession?.startRunning()
+	}
+	public func stopRunning() {
+		captureSession?.stopRunning()
 	}
 
 	required init?(coder: NSCoder) {
@@ -151,6 +159,12 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 			self.addBoxes(forObservations: results)
 			self.observationsCallback?(results,self)
 			self.displayBoxes()
+			if !(self.shouldRecordCallback?() ?? true) {
+				// stop recording
+				DispatchQueue.main.sync {
+					self.stopRunning()
+				}
+			}
 		})
 		request.recognitionLevel = .accurate
 //		request.usesLanguageCorrection = false

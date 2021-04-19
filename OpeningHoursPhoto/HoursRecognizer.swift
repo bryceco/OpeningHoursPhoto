@@ -486,6 +486,7 @@ fileprivate enum Token : Equatable {
 class HoursRecognizer: ObservableObject {
 
 	private var resultHistory = [String:Int]()
+	private var finished = false
 
 	@Published var text = "" {
 		willSet {
@@ -494,6 +495,11 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	init() {
+	}
+
+	public func restart() {
+		resultHistory.removeAll()
+		finished = false
 	}
 
 	private class func tokensForString(_ strings: [SubstringRectConfidence]) -> [TokenRectConfidence] {
@@ -511,6 +517,28 @@ class HoursRecognizer: ObservableObject {
 			_ = scanner.scanWhitespace()
 		}
 		return list
+	}
+
+	private class func stringsForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [SubstringRectConfidence] {
+		var wordList = [SubstringRectConfidence]()
+		for observation in observations {
+			guard let candidate = observation.topCandidates(1).first else { continue }
+			// Each observation can contain text in disconnected parts of the screen,
+			// so we tokenize the string and extract the screen location of each token
+			let rectf:(Range<String.Index>)->CGRect = {
+				let rect = try! candidate.boundingBox(for: $0)!.boundingBox
+				let rect2 = rect.applying(transform)
+				return rect2
+			}
+			let words = candidate.string.split(separator: " ")
+			let words2 = words.map({ word -> SubstringRectConfidence in
+				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
+				let rect = rectf( word.startIndex ..< word.endIndex )
+				return (word, rect, rectf, candidate.confidence)
+			})
+			wordList += words2
+		}
+		return wordList
 	}
 
 	// split the list of sorted tokens into lines of text
@@ -554,32 +582,63 @@ class HoursRecognizer: ObservableObject {
 		return lines
 	}
 
-	private class func stringsForImage(observations: [VNRecognizedTextObservation], transform:CGAffineTransform) -> [SubstringRectConfidence] {
-		var wordList = [SubstringRectConfidence]()
-		for observation in observations {
-			guard let candidate = observation.topCandidates(1).first else { continue }
-			// Each observation can contain text in disconnected parts of the screen,
-			// so we tokenize the string and extract the screen location of each token
-			let rectf:(Range<String.Index>)->CGRect = {
-				let rect = try! candidate.boundingBox(for: $0)!.boundingBox
-				let rect2 = rect.applying(transform)
-				return rect2
+	private class func hoursStringForTokens(_ tokenLines: [[TokenRectConfidence]]) -> String {
+		var days = [TokenRectConfidence]()
+		var times = [TokenRectConfidence]()
+		var result = ""
+
+		for line in tokenLines + [[(.endOfText,CGRect(),0.0)]] {
+			// each line should be 1 or more days, then 2 or more hours
+			for token in line  {
+				switch token.token {
+				case .day, .endOfText:
+					if times.count >= 2 {
+						// output preceding days/times
+						if days.count > 0 {
+							if days.count == 2 {
+								// treat as a range of days
+								result += "\(days[0].token)-\(days[1].token)"
+							} else {
+								// treat as a list of days
+								result += days.reduce("", { result, next in
+									return result == "" ? "\(next.token)" : result + "," + "\(next.token)"
+								})
+							}
+							result += " "
+						}
+						times = times.bestTwo { $0.confidence > $1.confidence }
+
+						result += "\(times[0].token)-\(times[1].token)"
+						result += ", "
+					}
+					if times.count > 0 {
+						times = []
+						days = []
+					}
+					days.append(token)
+
+				case .time:
+					times.append(token)
+					break
+				case .dash:
+					break
+				}
 			}
-			let words = candidate.string.split(separator: " ")
-			let words2 = words.map({ word -> SubstringRectConfidence in
-				// Previous call returns tokens with substrings, which we can pass to candidate to get the rect
-				let rect = rectf( word.startIndex ..< word.endIndex )
-				return (word, rect, rectf, candidate.confidence)
-			})
-			wordList += words2
 		}
-		return wordList
+		if result.hasSuffix(", ") {
+			result = String(result.dropLast(2))
+		}
+		return result
 	}
 
 	private func updateWithObservations(observations: [VNRecognizedTextObservation],
 										transform: CGAffineTransform,
 										camera: CameraView?)
 	{
+		if finished {
+			return
+		}
+
 		#if true
 		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
 		Swift.print("\"\(raw)\"")
@@ -675,9 +734,14 @@ class HoursRecognizer: ObservableObject {
 
 		print("\(text)")
 
-		let count = resultHistory[text] ?? 0
-		resultHistory[text] = count+1
-
+		if text.count > 0 {
+			let count = (resultHistory[text] ?? 0) + 1
+			resultHistory[text] = count
+			if count >= 5 {
+				finished = true
+			}
+		}
+		
 		let best = resultHistory.max { $0.value < $1.value }?.key ?? ""
 
 		if Thread.isMainThread {
@@ -715,56 +779,9 @@ class HoursRecognizer: ObservableObject {
 		try? requestHandler.perform([request])
 	}
 
-
-	private class func hoursStringForTokens(_ tokenLines: [[TokenRectConfidence]]) -> String {
-		var days = [TokenRectConfidence]()
-		var times = [TokenRectConfidence]()
-		var result = ""
-
-		for line in tokenLines + [[(.endOfText,CGRect(),0.0)]] {
-			// each line should be 1 or more days, then 2 or more hours
-			for token in line  {
-				switch token.token {
-				case .day, .endOfText:
-					if times.count >= 2 {
-						// output preceding days/times
-						if days.count > 0 {
-							if days.count == 2 {
-								// treat as a range of days
-								result += "\(days[0].token)-\(days[1].token)"
-							} else {
-								// treat as a list of days
-								result += days.reduce("", { result, next in
-									return result == "" ? "\(next.token)" : result + "," + "\(next.token)"
-								})
-							}
-							result += " "
-						}
-						times = times.bestTwo { $0.confidence > $1.confidence }
-
-						result += "\(times[0].token)-\(times[1].token)"
-						result += ", "
-					}
-					if times.count > 0 {
-						times = []
-						days = []
-					}
-					days.append(token)
-
-				case .time:
-					times.append(token)
-					break
-				case .dash:
-					break
-				}
-			}
-		}
-		if result.hasSuffix(", ") {
-			result = String(result.dropLast(2))
-		}
-		return result
+	public func isFinished() -> Bool {
+		return finished
 	}
-
 }
 
 #if targetEnvironment(macCatalyst)
