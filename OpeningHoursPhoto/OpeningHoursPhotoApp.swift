@@ -12,7 +12,8 @@ struct OpeningHoursPhotoApp: App {
 	init() {
 #if targetEnvironment(macCatalyst)
 		let bulk = BulkProcess()
-		bulk.processFolder(path: "OpeningHoursPhotos")
+		// bulk.processFolder(path: "OpeningHoursPhotos")
+		bulk.processFile(path: "opening_hours/deduplicated/IMG_20180517_140507.jpg")
 		bulk.processFolder(path: "opening_hours/deduplicated")
 #endif
 	}

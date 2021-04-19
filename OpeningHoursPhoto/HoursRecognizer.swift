@@ -483,11 +483,12 @@ fileprivate enum Token : Equatable {
 	}
 }
 
-class HoursRecognizer: ObservableObject {
+public class HoursRecognizer: ObservableObject {
 
 	private var resultHistory = [String:Int]()
 	private var finished = false
 
+	@Published public var language: Language = .en
 	@Published var text = "" {
 		willSet {
 			objectWillChange.send()
@@ -497,9 +498,17 @@ class HoursRecognizer: ObservableObject {
 	init() {
 	}
 
+	public enum Language: String, CaseIterable, Identifiable {
+		public var id: String { get { self.rawValue } }
+		case en = "en"
+		case de = "de"
+	}
+
 	public func restart() {
-		resultHistory.removeAll()
-		finished = false
+		self.text = ""
+		self.resultHistory.removeAll()
+		self.finished = false
+
 	}
 
 	private class func tokensForString(_ strings: [SubstringRectConfidence]) -> [TokenRectConfidence] {
@@ -639,7 +648,7 @@ class HoursRecognizer: ObservableObject {
 			return
 		}
 
-		#if true
+		#if false
 		let raw = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
 		Swift.print("\"\(raw)\"")
 		#endif
@@ -706,12 +715,15 @@ class HoursRecognizer: ObservableObject {
 		// if a sequence has multiple days then take only the best 2
 		tokenSets = tokenSets.map( { return $0.first!.token.isDay() ? $0.bestTwo( {$0.confidence > $1.confidence} ) : $0 })
 
-		// if a sequence has multiple times then take only the best 2 that are reasonably close together
+		// if a sequence has multiple times then take only the best 2
 		tokenSets = tokenSets.compactMap( {
 			if !$0.first!.token.isTime() || $0.count < 2 { return $0 }	// anything not a time sequence return as-is
 			let best = $0.bestTwo( {$0.confidence > $1.confidence} )
 			if best.count == 1 {
 				// don't permit an uncoupled time
+				return nil
+			}
+			if "\(best[0].token)" == "00:00" && "\(best[1])" == "00:00" {
 				return nil
 			}
 			return best
@@ -732,7 +744,9 @@ class HoursRecognizer: ObservableObject {
 
 		let text = HoursRecognizer.hoursStringForTokens( tokenSets )
 
+		#if false
 		print("\(text)")
+		#endif
 
 		if text.count > 0 {
 			let count = (resultHistory[text] ?? 0) + 1
@@ -760,7 +774,7 @@ class HoursRecognizer: ObservableObject {
 	}
 
 	func setImage(image: CGImage, isRotated: Bool) {
-		self.text = ""
+		self.restart()
 
 //		let rotationTransform = CGAffineTransform(translationX: 0, y: 1).rotated(by: -CGFloat.pi / 2)
 
@@ -789,6 +803,20 @@ class BulkProcess {
 	init() {
 	}
 
+	func processFile(path:String) {
+		do {
+			let userDirectory = try FileManager.default.url(for: FileManager.SearchPathDirectory.downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+			let filePath = userDirectory.appendingPathComponent(path)
+			let recognizer = HoursRecognizer()
+			guard let image = UIImage(contentsOfFile: filePath.path),
+				  let cgImage = image.cgImage else { return }
+			recognizer.setImage(image: cgImage, isRotated: true)
+			print("\"\(filePath.lastPathComponent)\" => \"\(recognizer.text)\",")
+		} catch {
+			print(error.localizedDescription)
+		}
+	}
+
 	func processFolder(path:String) {
 		do {
 			let userDirectory = try FileManager.default.url(for: FileManager.SearchPathDirectory.downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
@@ -800,7 +828,7 @@ class BulkProcess {
 				guard let image = UIImage(contentsOfFile: fileName.path),
 					  let cgImage = image.cgImage else { continue }
 				recognizer.setImage(image: cgImage, isRotated: true)
-				print("\"\(fileName.lastPathComponent)\" => \"\(recognizer.text)\"")
+				print("\"\(fileName.lastPathComponent)\" => \"\(recognizer.text)\",")
 			}
 		} catch {
 			print(error.localizedDescription)
