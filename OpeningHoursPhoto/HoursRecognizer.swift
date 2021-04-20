@@ -104,17 +104,24 @@ fileprivate class RectScanner {
 		set { scanner.currentIndex = newValue }
 	}
 
+	var string: String { return scanner.string }
+
 	var isAtEnd: Bool {
 		get { scanner.isAtEnd }
 	}
 
-	func result(_ sub:Substring) -> (String,CGRect) {
+	func result(_ sub:Substring) -> StringRect {
 		let d1 = sub.distance(from: sub.base.startIndex, to: sub.startIndex )
 		let d2 = sub.distance(from: sub.base.startIndex, to: sub.endIndex )
 		let p1 = substring.index(substring.startIndex, offsetBy: d1)
 		let p2 = substring.index(substring.startIndex, offsetBy: d2)
 		let rect = rectf(p1..<p2)
 		return (String(sub),rect)
+	}
+
+	func lastChar() -> StringRect {
+		let last = scanner.string.index(before: scanner.string.endIndex)
+		return result(scanner.string[last..<scanner.string.endIndex])
 	}
 
 	func scanString(_ string: String) -> StringRect? {
@@ -194,7 +201,11 @@ fileprivate class MultiScanner {
 	var currentIndex: (scanner:Int, index:String.Index) {
 		get { (scannerIndex, scanners[scannerIndex].currentIndex) }
 		set { scannerIndex = newValue.0
-			scanners[scannerIndex].currentIndex = newValue.1 }
+			scanners[scannerIndex].currentIndex = newValue.1
+			for scan in scanners[(scannerIndex+1)...] {
+				scan.currentIndex = scan.string.startIndex
+			}
+		}
 	}
 
 	var scanner:RectScanner {
@@ -209,6 +220,12 @@ fileprivate class MultiScanner {
 	var isAtEnd: Bool { return scanner.isAtEnd }
 
 	func scanString(_ string: String) -> StringRect? {
+		// we need to fudge an implied space at the break between two observations:
+		if string == " " && scannerIndex > 0 && scanner.currentIndex == scanner.string.startIndex {
+			// return rect for previous character
+			let rect = scanners[scannerIndex-1].lastChar().rect
+			return (" ",rect)
+		}
 		return scanner.scanString(string)
 	}
 
@@ -224,14 +241,7 @@ fileprivate class MultiScanner {
 	}
 
 	func scanUpToWhitespace() -> StringRect? {
-		var sub = scanner.scanUpToWhitespace()
-		// repeat in case we need to switch to next scanner
-		if sub != nil {
-			while let s = scanner.scanUpToWhitespace() {
-				sub = (sub!.string + s.string, sub!.rect.union(s.rect))
-			}
-		}
-		return sub
+		return scanner.scanUpToWhitespace()
 	}
 
 	func scanInt() -> StringRect? {
@@ -301,11 +311,13 @@ fileprivate struct Time {
 	}
 
 	static func scan(scanner: MultiScanner) -> (time:Self, rect:CGRect, confidence:Float)? {
+
 		let index = scanner.currentIndex
 		guard let hour = scanner.scanInt() else { return nil }
 		if let iHour = Int(hour.string),
 		   iHour >= 0 && iHour <= 24
 		{
+			let index2 = scanner.currentIndex
 			if scanner.scanString(":") != nil || scanner.scanString(".") != nil || scanner.scanString(" ") != nil,
 			   let minute = scanner.scanInt(),
 			   minute.string.count == 2,
@@ -326,6 +338,8 @@ fileprivate struct Time {
 						hour.rect.union(minute.rect),
 						6.0)
 			}
+			scanner.currentIndex = index2
+
 			_ = scanner.scanWhitespace()
 			if let am = scanner.scanString("AM") {
 				return (Time(hour: iHour%12, minute: 0),
@@ -385,6 +399,14 @@ fileprivate enum Token : Equatable {
 	func isTime() -> Bool {
 		switch self {
 		case .time:
+			return true
+		default:
+			return false
+		}
+	}
+	func isDash() -> Bool {
+		switch self {
+		case .dash:
 			return true
 		default:
 			return false
@@ -526,58 +548,87 @@ public class HoursRecognizer: ObservableObject {
 		// convert lines of strings to lines of tokens
 		let tokenLines = stringLines.compactMap { line -> [TokenRectConfidence]? in
 			let tokens = HoursRecognizer.tokensForString( line, language: language )
-			let tokens2 = tokens.filter({ $0.token.isDay() || $0.token.isTime() })
-			let tokens3 = tokens2.map({ ($0.token, $0.rect, $0.confidence) })
-			return tokens3.count > 0 ? tokens3 : nil
+			return tokens.isEmpty ? nil : tokens
 		}
 		return tokenLines
 	}
 
 	// split the lines so each sequence of days or times is in its own group
-	private class func TokenSequencesForTokenLines( _ tokenLines: [[TokenRectConfidence]]) -> [[TokenRectConfidence]] {
+	private class func homogeneousSequencesForTokenLines( _ tokenLines: [[TokenRectConfidence]]) -> [[TokenRectConfidence]] {
 		var tokenSets = [[TokenRectConfidence]]()
 		for line in tokenLines {
-			tokenSets.append( [line.first!] )
-			for token in line[1...] {
-				if token.token.isDay() == tokenSets.last?.first?.token.isDay() ||
-				   token.token.isTime() == tokenSets.last?.first?.token.isTime()
+			guard let first = line.indices.first(where: {!line[$0].token.isDash()}) else { continue }
+			tokenSets.append([line[first]] )
+			var prevDash: TokenRectConfidence? = nil
+
+			for token in line[(first+1)...] {
+				if token.token.isDash() {
+					prevDash = token
+				} else if token.token.isDay() == tokenSets.last?.first?.token.isDay() ||
+						  token.token.isTime() == tokenSets.last?.first?.token.isTime()
 				{
+					if let dash = prevDash {
+						tokenSets[tokenSets.count-1].append(dash)
+						prevDash = nil
+					}
 					tokenSets[tokenSets.count-1].append(token)
 				} else {
+					prevDash = nil
 					tokenSets.append([token])
 				}
 			}
 			tokenSets.append([])
 		}
-		tokenSets = tokenSets.filter { $0.count > 0 }
+		tokenSets.removeAll(where: { $0.isEmpty })
 
 		return tokenSets
 	}
 
 
 	// if a sequence has multiple days then take only the best 2
-	private class func GoodDaysForTokenSequences( _ tokenSets: [[TokenRectConfidence]]) -> [[TokenRectConfidence]] {
-		return tokenSets.map( { return $0.first!.token.isDay() ? $0.bestTwo( {$0.confidence < $1.confidence} ) : $0 })
+	private class func GoodDaysForTokenSequences( _ tokenSet: [TokenRectConfidence]) -> [TokenRectConfidence]? {
+		// return tokenSets.map( { return $0.first!.token.isDay() ? $0.bestTwo( {$0.confidence < $1.confidence} ) : $0 })
+		return tokenSet
 	}
 
 	// if a sequence has multiple times then take only the best even number
-	private class func GoodTimesForTokenSequences( _ tokenSets: [[TokenRectConfidence]]) -> [[TokenRectConfidence]] {
-		return tokenSets.compactMap( { set in
-		   if !set.first!.token.isTime() { return set }	// anything not a time sequence return as-is
-		   var list = set
-		   // all times should be roughly equal confidence, so discard any that are oddly poor
-		   let conf = list.bestTwo( {$0.confidence < $1.confidence}).min(by: {$0.confidence < $1.confidence})!.confidence
-		   list.removeAll(where: {$0.confidence < conf * 0.5})
-		   // make sure it's an even number
-		   if list.count % 2 != 0 {
-			   let worstIndex = set.indices.min(by: {list[$0].confidence < list[$1].confidence})!
-			   list.remove(at: worstIndex)
-		   }
-		   return list.count > 0 ? list : nil
-	   })
+	private class func GoodTimesForTokenSequences( _ tokenSet: [TokenRectConfidence]) -> [TokenRectConfidence]? {
+		var list = tokenSet
+		var pairs = [(TokenRectConfidence,TokenRectConfidence)]()
+
+		// pull out dash-seperated pairs
+		while let dash = list.indices.first(where: {list[$0].token.isDash()}) {
+			if dash > 1 {
+				var priors = Array(list[0..<dash-1])
+				if priors.count % 2 == 1 {
+					let worst = priors.indices.min(by: {priors[$0].confidence < priors[$1].confidence})!
+					priors.remove(at: worst)
+				}
+				while !priors.isEmpty {
+					pairs.append( (priors[0], priors[1] ) )
+					priors.removeSubrange(0...1)
+				}
+			}
+
+			pairs.append( (list[dash-1], list[dash+1]) )
+			list.removeSubrange( 0...dash+1 )
+		}
+		if list.count % 2 == 1 {
+			let worst = list.indices.min(by: {list[$0].confidence < list[$1].confidence})!
+			list.remove(at: worst)
+		}
+		while !list.isEmpty {
+			pairs.append( (list[0], list[1] ) )
+			list.removeSubrange(0...1)
+		}
+
+		// look for suspicious pairs
+		pairs.removeAll(where: {"\($0.0.token)" == "00:00" && "\($0.1.token)" == "00:00"})
+
+		return pairs.count > 0 ? pairs.flatMap({ [$0.0,$0.1] }) : nil
 	}
 
-
+	// convert lists of tokens to the final string
 	private class func hoursStringForTokens(_ tokenLines: [[TokenRectConfidence]]) -> String {
 		var days = [TokenRectConfidence]()
 		var times = [TokenRectConfidence]()
@@ -655,37 +706,39 @@ public class HoursRecognizer: ObservableObject {
 		// split into lines of text
 		let stringLines = HoursRecognizer.getStringLines( strings )
 
-		#if false
+		#if true
 		print("")
 		print("string lines:")
 		for line in stringLines {
 			let s1 = line.map({$0.substring}).joined(separator: " ")
-			let s2 = line.map({"\($0.rect)"}).joined(separator: " ")
+			let s2 = line.map({"\($0.confidence)"}).joined(separator: " ")
 			print("\(s1): \(s2)")
 		}
 		#endif
 
 		// convert strings to tokens
-		let tokenLines = HoursRecognizer.tokenLinesForStringLines( stringLines, language: self.language )
+		var tokenSets = HoursRecognizer.tokenLinesForStringLines( stringLines, language: self.language )
 
-		#if false
+		#if true
 		print("")
 		print("token lines:")
-		for s in tokenLines {
+		for s in tokenSets {
 			let s1 = s.map({ "\($0.token)"}).joined(separator: " ")
-			let s2 = s.map({ "\($0.rect)"}).joined(separator: " ")
+			let s2 = s.map({ "\($0.confidence)"}).joined(separator: " ")
 			print("\(s1): \(s2)")
 		}
 		#endif
 
+		tokenSets = HoursRecognizer.homogeneousSequencesForTokenLines( tokenSets )
+
 		// get homogeneous day/time sets
-		var tokenSets = HoursRecognizer.TokenSequencesForTokenLines( tokenLines )
-
-		// if a sequence has multiple days then take only the best days
-		tokenSets = HoursRecognizer.GoodDaysForTokenSequences( tokenSets )
-
-		// if a sequence has multiple times then take only the best times
-		tokenSets = HoursRecognizer.GoodTimesForTokenSequences( tokenSets )
+		tokenSets = tokenSets.compactMap {
+			if $0.first!.token.isDay() {
+				return HoursRecognizer.GoodDaysForTokenSequences( $0 )
+			} else {
+				return HoursRecognizer.GoodTimesForTokenSequences( $0 )
+			}
+		}
 
 		#if false
 		print("")
