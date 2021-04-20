@@ -502,40 +502,40 @@ public class HoursRecognizer: ObservableObject {
 	private class func getStringLines( _ allStrings: [SubstringRectConfidence] ) -> [[SubstringRectConfidence]] {
 		var lines = [[SubstringRectConfidence]]()
 
-		// sort strings left-to-right
-//		let allStrings = allStrings.sorted(by: {$0.rect.minX < $1.rect.minX})
+		var list = allStrings
 
-		var stack = [ ArraySlice(allStrings) ]
-
-		while let list = stack.popLast() {
-
-			if list.count == 0 {
-				continue
-			}
+		while !list.isEmpty {
 
 			// get highest confidence string
 			let bestIndex = list.indices.max(by: {list[$0].confidence < list[$1].confidence})!
+			let best = list[ bestIndex ]
+			list.remove(at: bestIndex)
+			var lineStrings = [best]
 
-			// find adjacent tokens on the same line to the left
-			let lower = (list.startIndex..<bestIndex).reversed().first(where: {
-				let prevRect = list[$0+1].rect
-				let thisRect = list[$0].rect
-				return !(thisRect.maxX <= prevRect.minX && (prevRect.minY...prevRect.maxY).contains( thisRect.midY ))
-			})?.advanced(by: 1) ?? list.startIndex
+			// find tokens to left
+			var prev = best
+			while true {
+				let strings = list.indices.filter({ list[$0].rect.maxX <= prev.rect.minX && (prev.rect.minY...prev.rect.maxY).contains( list[$0].rect.midY )})
+				if strings.isEmpty { break }
+				let closest = strings.min(by: {prev.rect.minX - list[$0].rect.maxX < prev.rect.minX - list[$1].rect.maxX})!
+				prev = list[closest]
+				lineStrings.insert( prev, at: 0)
+				list.remove(at: closest)
+			}
 
-			// find adjacent tokens on the same line to the right
-			let upper = (bestIndex+1..<list.endIndex).first(where: {
-				let prevRect = list[$0-1].rect
-				let thisRect = list[$0].rect
-				return !(thisRect.minX >= prevRect.maxX && (prevRect.minY...prevRect.maxY).contains( thisRect.midY ))
-			}) ?? list.endIndex
+			// find tokens to right
+			prev = best
+			while true {
+				let strings = list.indices.filter({ list[$0].rect.minX >= prev.rect.maxX && (prev.rect.minY...prev.rect.maxY).contains( list[$0].rect.midY )})
+				if strings.isEmpty { break }
+				let closest = strings.min(by: {list[$0].rect.minX - prev.rect.maxX < list[$1].rect.minX - prev.rect.maxX})!
+				prev = list[closest]
+				lineStrings.append( prev )
+				list.remove(at: closest)
+			}
 
 			// save the line of strings
-			lines.append( Array( list[lower..<upper] ) )
-
-			// recurse on
-			stack.append( list[..<lower] )
-			stack.append( list[upper...] )
+			lines.append( lineStrings )
 		}
 
 		// sort lines top-to-bottom
