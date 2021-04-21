@@ -39,23 +39,6 @@ extension CGRect {
 	}
 }
 
-extension CharacterSet {
-	fileprivate func contains(character: Character) -> Bool {
-		for scaler in character.unicodeScalars {
-			if self.contains(scaler) {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-extension Substring {
-	fileprivate static func from(_ start: Substring, to: Substring) -> Substring {
-		return start.base[ start.startIndex..<to.endIndex ]
-	}
-}
-
 // return a list where all items are removed except the two with highest confidence (preserving their order)
 extension Array {
 	fileprivate func bestTwo(_ lessThan: (_ lhs: Self.Element, _ rhs: Self.Element) -> Bool) -> [Self.Element] {
@@ -79,7 +62,7 @@ extension Array {
 	}
 }
 
-fileprivate typealias SubstringRectf = (string:Substring,rectf:(Range<String.Index>)->CGRect)
+fileprivate typealias SubstringRectf = (string:Substring, rectf:(Range<String.Index>)->CGRect)
 fileprivate typealias StringRect = (string:String, rect:CGRect)
 
 // A version of Scanner that returns a rect for each string
@@ -106,11 +89,9 @@ fileprivate class RectScanner {
 
 	var string: String { return scanner.string }
 
-	var isAtEnd: Bool {
-		get { scanner.isAtEnd }
-	}
+	var isAtEnd: Bool { return scanner.isAtEnd }
 
-	func result(_ sub:Substring) -> StringRect {
+	private func result(_ sub:Substring) -> StringRect {
 		let d1 = sub.distance(from: sub.base.startIndex, to: sub.startIndex )
 		let d2 = sub.distance(from: sub.base.startIndex, to: sub.endIndex )
 		let p1 = substring.index(substring.startIndex, offsetBy: d1)
@@ -169,16 +150,19 @@ fileprivate class RectScanner {
 
 	func scanAnyWord(_ words: [String]) -> StringRect? {
 		let index = self.currentIndex
-		if let sub = scanner.scanCharacters(from: RectScanner.allLetters) {
-			let lower1 = sub.lowercased()
+		if let scan = scanner.scanCharacters(from: RectScanner.allLetters)?.lowercased() {
+			// we match if the scanned word is a 2-3 letter prefix of the first word in the list
+			if (2...3).contains(scan.count) && words.first!.hasPrefix(scan) {
+				return result(scanner.string[index..<scanner.currentIndex])
+			}
 			for word in words {
-				let lower2 = word.lowercased()
-				if lower1.count > 4 {
-					if LevenshteinDistance( lower1, lower2) <= lower1.count/4 {
+				let word = word.lowercased()
+				if scan.count > 4 {
+					if LevenshteinDistance( word, scan) <= scan.count/4 {
 						return result(scanner.string[index..<scanner.currentIndex])
 					}
 				} else {
-					if lower1 == lower2 {
+					if word == scan {
 						return result(scanner.string[index..<scanner.currentIndex])
 					}
 				}
@@ -292,36 +276,46 @@ fileprivate enum Day: Int, Strideable, CaseIterable {
 		}
 	}
 
-	static let english = [	Day.Mo: ["monday", 		"mo", "mon"],
-							Day.Tu: ["tuesday", 	"tu", "tue"],
-							Day.We: ["wednesday",	"we", "wed"],
-							Day.Th: ["thursday", 	"th", "thu", "thur"],
-							Day.Fr: ["friday", 		"fr", "fri"],
-							Day.Sa: ["saturday", 	"sa", "sat"],
-							Day.Su: ["sunday", 		"su", "sun"]
+	static let english = [	Day.Mo: ["monday"],
+							Day.Tu: ["tuesday"],
+							Day.We: ["wednesday"],
+							Day.Th: ["thursday", "thur"],
+							Day.Fr: ["friday"],
+							Day.Sa: ["saturday"],
+							Day.Su: ["sunday"]
 	]
-	static let german = [	Day.Mo: ["montag", 		"mo", "mon"],
-							Day.Tu: ["dienstag", 	"di"],
-							Day.We: ["mittwoch",	"mi"],
-							Day.Th: ["donnerstag", 	"do", "don"],
-							Day.Fr: ["freitag", 	"fr"],
-							Day.Sa: ["samstag", 	"sa", "sam"],
-							Day.Su: ["sonntag",		"so", "son"]
+	static let french = [	Day.Mo: ["lundi"],
+							Day.Tu: ["mardi"],
+							Day.We: ["mercredi",	"mercr"],
+							Day.Th: ["jeudi"],
+							Day.Fr: ["vendredi", 	"vendr"],
+							Day.Sa: ["samedi"],
+							Day.Su: ["dimanche"]
 	]
-        static let french = [	Day.Mo: ["lundi", 		"lun", "l"],
-							Day.Tu: ["mardi", 	"mar", "m"],
-							Day.We: ["mercredi",	"mercr", "mer", "m"],
-							Day.Th: ["jeudi", 	"jeu", "j"],
-							Day.Fr: ["vendredi", 	"vendr", "ven", "v"],
-							Day.Sa: ["samedi", 	"sam", "s"],
-							Day.Su: ["dimanche", 		"dim", "d"]
+	static let german = [	Day.Mo: ["montag"],
+							Day.Tu: ["dienstag"],
+							Day.We: ["mittwoch"],
+							Day.Th: ["donnerstag"],
+							Day.Fr: ["freitag"],
+							Day.Sa: ["samstag"],
+							Day.Su: ["sonntag"]
+	]
+	static let italian = [	Day.Mo: ["lunedì"],
+							Day.Tu: ["martedì"],
+							Day.We: ["mercoledì"],
+							Day.Th: ["giovedì"],
+							Day.Fr: ["venerdì"],
+							Day.Sa: ["sabato"],
+							Day.Su: ["domenica"]
 	]
 
 	static func scan(scanner:MultiScanner, language:HoursRecognizer.Language) -> (day:Self, rect:CGRect, confidence:Float)? {
 		let dict = { () -> [Day:[String]] in
 			switch language {
 			case .en: return english
+			case .fr: return french
 			case .de: return german
+			case .it: return italian
 			}
 		}()
 		for (day,strings) in dict {
@@ -370,14 +364,22 @@ fileprivate struct Time: Comparable, Hashable {
 		return lhs.minutes < rhs.minutes
 	}
 
-	static func scan(scanner: MultiScanner) -> (time:Self, rect:CGRect, confidence:Float)? {
+	static func scan(scanner: MultiScanner, language:HoursRecognizer.Language) -> (time:Self, rect:CGRect, confidence:Float)? {
+		let seperators: [String] = { () -> [String] in
+		switch language {
+		case .fr:
+			return [":", ".", " ", "h"]
+		default:
+			return [":", ".", " "]
+		}}()
+
 		let index = scanner.currentIndex
 		guard let hour = scanner.scanInt() else { return nil }
 		if let iHour = Int(hour.string),
 		   iHour >= 0 && iHour <= 24
 		{
 			let index2 = scanner.currentIndex
-			if scanner.scanString(":") != nil || scanner.scanString(".") != nil || scanner.scanString(" ") != nil,
+			if seperators.first(where: {scanner.scanString($0) != nil}) != nil,
 			   let minute = scanner.scanInt(),
 			   minute.string.count == 2,
 			   minute.string >= "00" && minute.string < "60"
@@ -425,6 +427,8 @@ fileprivate struct Dash {
 			switch language {
 			case .en: return "to"
 			case .de: return "bis"
+			case .fr: return "à"
+			case .it: return "alle"
 			}}()
 
 		if let s = scanner.scanString("-") ?? scanner.scanWord(through) {
@@ -488,7 +492,7 @@ fileprivate enum Token : Equatable {
 		if let (day,rect,confidence) = Day.scan(scanner: scanner, language: language) {
 			return (.day(day),rect,confidence)
 		}
-		if let (time,rect,confidence) = Time.scan(scanner: scanner) {
+		if let (time,rect,confidence) = Time.scan(scanner: scanner, language: language) {
 			return (.time(time),rect,confidence)
 		}
 		if let (dash,rect,confidence) = Dash.scan(scanner: scanner, language: language) {
@@ -527,6 +531,8 @@ public class HoursRecognizer: ObservableObject {
 		public var id: String { get { self.rawValue } }
 		case en = "en"
 		case de = "de"
+		case fr = "fr"
+		case it = "it"
 	}
 
 	public func restart() {
