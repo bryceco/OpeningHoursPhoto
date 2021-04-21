@@ -36,7 +36,7 @@ public struct OpeningHoursPhotoView: View {
 					.background(Color.blue)
 				Spacer()
 				Text(recognizer.text)
-					.frame(height: 200.0)
+					.frame(height: 100.0)
 				HStack {
 					Spacer()
 					Button("Cancel") {
@@ -63,7 +63,6 @@ public struct OpeningHoursPhotoView: View {
 			.pickerStyle(MenuPickerStyle())
 			.foregroundColor(.white)
 			.padding()
-			.background(Color.blue)
 			.overlay(Capsule(style: .continuous)
 						.stroke(Color.white, lineWidth: 2.0))
 		}
