@@ -308,6 +308,14 @@ fileprivate enum Day: Int, Strideable, CaseIterable {
 							Day.Sa: ["samstag", 	"sa", "sam"],
 							Day.Su: ["sonntag",		"so", "son"]
 	]
+        static let french = [	Day.Mo: ["lundi", 		"lun", "l"],
+							Day.Tu: ["mardi", 	"mar", "m"],
+							Day.We: ["mercredi",	"mercr", "mer", "m"],
+							Day.Th: ["jeudi", 	"jeu", "j"],
+							Day.Fr: ["vendredi", 	"vendr", "ven", "v"],
+							Day.Sa: ["samedi", 	"sam", "s"],
+							Day.Su: ["dimanche", 		"dim", "d"]
+	]
 
 	static func scan(scanner:MultiScanner, language:HoursRecognizer.Language) -> (day:Self, rect:CGRect, confidence:Float)? {
 		let dict = { () -> [Day:[String]] in
