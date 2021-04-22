@@ -57,7 +57,7 @@ public struct OpeningHoursPhotoView: View {
 			}
 			Picker(recognizer.language.rawValue, selection: $recognizer.language) {
 				ForEach(HoursRecognizer.Language.allCases) { lang in
-					Text( lang.rawValue ).tag( lang )
+					Text( lang.name ).tag( lang )
 				}
 			}
 			.pickerStyle(MenuPickerStyle())
@@ -82,6 +82,7 @@ struct OpeningHoursPhoto: UIViewRepresentable {
 		cam.shouldRecordCallback = {
 			return !recognizer.finished
 		}
+		cam.languages = [recognizer.language.isoCode]
 		return cam
 	}
 

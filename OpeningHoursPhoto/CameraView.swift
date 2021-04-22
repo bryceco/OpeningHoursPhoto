@@ -18,6 +18,7 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 	var photoCallback: ((CGImage)->(Void))? = nil
 	var observationsCallback: (([VNRecognizedTextObservation], CameraView)->(Void))? = nil
 	var shouldRecordCallback: (()->(Bool))? = nil
+	var languages: [String] = []
 
 	override func layoutSubviews() {
 		super.layoutSubviews()
@@ -178,6 +179,7 @@ class CameraView: UIView, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutpu
 		})
 		request.recognitionLevel = .accurate
 //		request.usesLanguageCorrection = false
+		request.recognitionLanguages = languages
 
 		let requestHandler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
 												   orientation: CGImagePropertyOrientation.right,

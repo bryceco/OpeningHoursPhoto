@@ -264,49 +264,37 @@ fileprivate enum Day: Int, Strideable, CaseIterable {
 		return Day(rawValue: (self.rawValue + n + 7) % 7)!
 	}
 
-	func name() -> String {
-		switch self {
-		case .Mo: return "Mo"
-		case .Tu: return "Tu"
-		case .We: return "We"
-		case .Th: return "Th"
-		case .Fr: return "Fr"
-		case .Sa: return "Sa"
-		case .Su: return "Su"
-		}
-	}
-
-	static let english = [	Day.Mo: ["monday"],
-							Day.Tu: ["tuesday"],
-							Day.We: ["wednesday"],
-							Day.Th: ["thursday", "thur"],
-							Day.Fr: ["friday"],
-							Day.Sa: ["saturday"],
-							Day.Su: ["sunday"]
+	private static let english = [	Day.Mo: ["monday"],
+									Day.Tu: ["tuesday"],
+									Day.We: ["wednesday"],
+									Day.Th: ["thursday", "thur"],
+									Day.Fr: ["friday"],
+									Day.Sa: ["saturday"],
+									Day.Su: ["sunday"]
 	]
-	static let french = [	Day.Mo: ["lundi"],
-							Day.Tu: ["mardi"],
-							Day.We: ["mercredi",	"mercr"],
-							Day.Th: ["jeudi"],
-							Day.Fr: ["vendredi", 	"vendr"],
-							Day.Sa: ["samedi"],
-							Day.Su: ["dimanche"]
+	private static let french = [	Day.Mo: ["lundi"],
+									Day.Tu: ["mardi"],
+									Day.We: ["mercredi",	"mercr"],
+									Day.Th: ["jeudi"],
+									Day.Fr: ["vendredi", 	"vendr"],
+									Day.Sa: ["samedi"],
+									Day.Su: ["dimanche"]
 	]
-	static let german = [	Day.Mo: ["montag"],
-							Day.Tu: ["dienstag"],
-							Day.We: ["mittwoch"],
-							Day.Th: ["donnerstag"],
-							Day.Fr: ["freitag"],
-							Day.Sa: ["samstag"],
-							Day.Su: ["sonntag"]
+	private static let german = [	Day.Mo: ["montag"],
+									Day.Tu: ["dienstag"],
+									Day.We: ["mittwoch"],
+									Day.Th: ["donnerstag"],
+									Day.Fr: ["freitag"],
+									Day.Sa: ["samstag"],
+									Day.Su: ["sonntag"]
 	]
-	static let italian = [	Day.Mo: ["lunedì"],
-							Day.Tu: ["martedì"],
-							Day.We: ["mercoledì"],
-							Day.Th: ["giovedì"],
-							Day.Fr: ["venerdì"],
-							Day.Sa: ["sabato"],
-							Day.Su: ["domenica"]
+	private static let italian = [	Day.Mo: ["lunedì"],
+									Day.Tu: ["martedì"],
+									Day.We: ["mercoledì"],
+									Day.Th: ["giovedì"],
+									Day.Fr: ["venerdì"],
+									Day.Sa: ["sabato"],
+									Day.Su: ["domenica"]
 	]
 
 	static func scan(scanner:MultiScanner, language:HoursRecognizer.Language) -> (day:Self, rect:CGRect, confidence:Float)? {
@@ -369,7 +357,7 @@ fileprivate struct Time: Comparable, Hashable {
 		switch language {
 		case .fr:
 			return [":", ".", " ", "h"]
-		default:
+		case .de, .en, .it:
 			return [":", ".", " "]
 		}}()
 
@@ -456,37 +444,25 @@ fileprivate enum Token : Equatable {
 
 	func day() -> Day? {
 		switch self {
-		case let .day(day):
-			return day
-		default:
-			return nil
+		case let .day(day):		return day
+		default:				return nil
 		}
 	}
 	func time() -> Time? {
 		switch self {
-		case let .time(time):
-			return time
-		default:
-			return nil
+		case let .time(time):	return time
+		default:				return nil
 		}
 	}
 	func dash() -> Dash? {
 		switch self {
-		case let .dash(dash):
-			return dash
-		default:
-			return nil
+		case let .dash(dash):	return dash
+		default:				return nil
 		}
 	}
-	func isDay() -> Bool {
-		return day() != nil
-	}
-	func isTime() -> Bool {
-		return time() != nil
-	}
-	func isDash() -> Bool {
-		return dash() != nil
-	}
+	func isDay() -> Bool {	return day() != nil	}
+	func isTime() -> Bool {	return time() != nil }
+	func isDash() -> Bool {	return dash() != nil }
 
 	static func scan(scanner: MultiScanner, language: HoursRecognizer.Language) -> TokenRectConfidence? {
 		if let (day,rect,confidence) = Day.scan(scanner: scanner, language: language) {
@@ -528,11 +504,15 @@ public class HoursRecognizer: ObservableObject {
 	}
 
 	public enum Language: String, CaseIterable, Identifiable {
-		public var id: String { get { self.rawValue } }
+		// these must be ISO codes
 		case en = "en"
 		case de = "de"
 		case fr = "fr"
 		case it = "it"
+
+		public var id: String { self.rawValue }
+		public var isoCode: String { "\(self)" }
+		public var name: String { Locale(identifier: self.rawValue).localizedString(forIdentifier:self.rawValue) ?? "<??>" }
 	}
 
 	public func restart() {
@@ -581,7 +561,7 @@ public class HoursRecognizer: ObservableObject {
 		return wordList
 	}
 
-	// splits observed text text blocks into lines of text, sorted left-to-right and top-to-bottom
+	// split observed text text blocks into lines of text, sorted left-to-right and top-to-bottom
 	private class func getStringLines( _ allStrings: [SubstringRectConfidence] ) -> [[SubstringRectConfidence]] {
 		var lines = [[SubstringRectConfidence]]()
 
@@ -627,8 +607,8 @@ public class HoursRecognizer: ObservableObject {
 		return lines
 	}
 
+	// convert lines of strings to lines of tokens
 	private class func tokenLinesForStringLines( _ stringLines: [[SubstringRectConfidence]], language: Language) -> [[TokenRectConfidence]] {
-		// convert lines of strings to lines of tokens
 		let tokenLines = stringLines.compactMap { line -> [TokenRectConfidence]? in
 			let tokens = HoursRecognizer.tokensForString( line, language: language )
 			return tokens.isEmpty ? nil : tokens
